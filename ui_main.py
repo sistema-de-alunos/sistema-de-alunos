@@ -1,94 +1,42 @@
-from core.qt_core import *
-from PySide6.QtWidgets import (
-    QLabel,
-    QLineEdit,
-    QPushButton,
-    QFrame,
-    QVBoxLayout
-)
-from PySide6.QtGui import QFont
+"""Monta a janela principal e liga as telas (Painel de Alunos <-> Cadastro)."""
+
+from core.qt_core import QStackedWidget
+from gui.dialogs.cadastro_alunos import CadastroAlunoWizard
+from gui.pages.home import PainelAlunosPage
+from models.alunos_service import AlunoService
 
 
-class UI_MainWindow(object):
+class UI_MainWindow:
     def setup_ui(self, parent):
-        if not parent.objectName():
-            parent.setObjectName("MainWindow")
-
+        parent.setWindowTitle("Sistema de Alunos")
         parent.resize(1280, 720)
-        parent.setMinimumSize(960, 540)
+        parent.setMinimumSize(960, 600)
 
-        # Widget central
-        self.central_frame = QFrame()
-        self.central_frame.setStyleSheet("""
-            QFrame{
-                background-color: #F5F7FA;
-            }
-        """)
+        self.aluno_service = AlunoService()
 
-        parent.setCentralWidget(self.central_frame)
+        self.stack = QStackedWidget()
+        parent.setCentralWidget(self.stack)
 
+        self.pagina_home = PainelAlunosPage(self.aluno_service)
+        self.pagina_cadastro = CadastroAlunoWizard(self.aluno_service)
 
-        # Layout principal
-        self.layout = QVBoxLayout(self.central_frame)
-        self.layout.setContentsMargins(40, 30, 40, 30)
-        self.layout.setSpacing(20)
+        self.stack.addWidget(self.pagina_home)
+        self.stack.addWidget(self.pagina_cadastro)
 
-        # Título
-        self.lblTitulo = QLabel("Painel de Alunos")
+        self.pagina_home.novo_aluno_solicitado.connect(self._abrir_cadastro)
+        self.pagina_cadastro.voltar_para_home.connect(self._voltar_para_home)
+        self.pagina_cadastro.cadastro_concluido.connect(self._aluno_cadastrado)
 
-        fonte = QFont()
-        fonte.setPointSize(20)
-        fonte.setBold(True)
+        self.stack.setCurrentWidget(self.pagina_home)
 
-        self.lblTitulo.setFont(fonte)
-        self.lblTitulo.setStyleSheet("""
-            QLabel{
-                color:#183C90;
-            }
-        """)
+    def _abrir_cadastro(self) -> None:
+        self.pagina_cadastro.resetar()
+        self.stack.setCurrentWidget(self.pagina_cadastro)
 
-        self.layout.addWidget(self.lblTitulo)
+    def _voltar_para_home(self) -> None:
+        self.stack.setCurrentWidget(self.pagina_home)
 
-        # Barra de pesquisa
-        self.txtPesquisa = QLineEdit()
-        self.txtPesquisa.setPlaceholderText("Buscar aluno...")
-
-        self.txtPesquisa.setFixedHeight(40)
-        self.txtPesquisa.setFixedSize(450, 40)
-        self.txtPesquisa.setStyleSheet("""
-            QLineEdit{
-                background:white;
-                border:1px solid #D9D9D9;
-                border-radius:10px;
-                padding-left:12px;
-                font-size:14px;
-            }
-        """)
-
-        self.layout.addWidget(self.txtPesquisa)
-
-
-        # Botão Novo Aluno
-        self.btnNovoAluno = QPushButton("Novo Aluno")
-
-        self.btnNovoAluno.setFixedHeight(60)
-
-        self.btnNovoAluno.setStyleSheet("""
-            QPushButton{
-                background:#4C56D6;
-                color:white;
-                border:none;
-                border-radius:12px;
-                font-size:16px;
-                font-weight:bold;
-            }
-
-            QPushButton:hover{
-                background:#3B46B1;
-            }
-        """)
-
-        self.layout.addWidget(self.btnNovoAluno)
-
-        # Espaço para a lista futuramente
-        self.layout.addStretch()
+    def _aluno_cadastrado(self) -> None:
+        self.pagina_home.recarregar()
+        self.stack.setCurrentWidget(self.pagina_home)
+        self.pagina_home.mostrar_sucesso("Aluno cadastrado com sucesso!")
