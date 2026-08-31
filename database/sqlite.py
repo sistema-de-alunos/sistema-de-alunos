@@ -52,6 +52,16 @@ def inicializar_banco() -> None:
                 tempo_sem_atividade TEXT,
                 objetivo_principal TEXT,
                 objetivo_outro TEXT,
+                frequencia_semanal TEXT,
+                tempo_treino_dia TEXT,
+                doenca_tem TEXT,
+                doenca_qual TEXT,
+                limitacao_tem TEXT,
+                limitacao_qual TEXT,
+                dor_tem TEXT,
+                dor_qual TEXT,
+                cirurgia_tem TEXT,
+                cirurgia_qual TEXT,
                 criado_em TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             )
             """
@@ -78,6 +88,16 @@ def _garantir_colunas_anamnese(conexao: sqlite3.Connection) -> None:
         "tempo_sem_atividade",
         "objetivo_principal",
         "objetivo_outro",
+        "frequencia_semanal",
+        "tempo_treino_dia",
+        "doenca_tem",
+        "doenca_qual",
+        "limitacao_tem",
+        "limitacao_qual",
+        "dor_tem",
+        "dor_qual",
+        "cirurgia_tem",
+        "cirurgia_qual",
     )
     for coluna in colunas_novas:
         if coluna not in colunas_existentes:

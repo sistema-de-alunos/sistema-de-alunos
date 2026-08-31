@@ -57,3 +57,22 @@ def validar_objetivo_principal(valor: Optional[str]) -> Optional[str]:
     if valor not in OBJETIVO_OPCOES:
         return "Selecione um objetivo."
     return None
+
+
+FREQUENCIA_SEMANAL_OPCOES = ["3 dias", "4 dias", "5 dias"]
+
+TEMPO_TREINO_OPCOES = ["30 minutos", "1 horas", "1:30 horas", "2 horas", "2:30 horas", "3+ horas"]
+
+
+def validar_frequencia_semanal(valor: Optional[str]) -> Optional[str]:
+    """Etapa 4 (Anamnese): exige uma das opções fixas de frequência semanal."""
+    if valor not in FREQUENCIA_SEMANAL_OPCOES:
+        return "Selecione uma opção."
+    return None
+
+
+def validar_tempo_treino_dia(valor: Optional[str]) -> Optional[str]:
+    """Etapa 4 (Anamnese): exige uma das opções fixas de tempo de treino por dia."""
+    if valor not in TEMPO_TREINO_OPCOES:
+        return "Selecione uma opção."
+    return None

@@ -38,11 +38,15 @@ from core.qt_core import (
 )
 from core.theme import Cores, Fontes
 from core.validators import (
+    FREQUENCIA_SEMANAL_OPCOES,
     SEXO_OPCOES,
+    TEMPO_TREINO_OPCOES,
+    validar_frequencia_semanal,
     validar_idade,
     validar_nome_completo,
     validar_objetivo_principal,
     validar_sexo,
+    validar_tempo_treino_dia,
     validar_treinou_antes,
 )
 from gui.widgets.botao_principal import BotaoPrimario, BotaoSecundario
@@ -157,6 +161,20 @@ class _CampoFormulario(QWidget):
                 }}
                 """
             )
+
+
+def _aplicar_paleta_clara_popup(campo: QComboBox) -> None:
+    """Reforça a paleta clara na view do popup (mesmo ajuste já usado no combo de sexo).
+
+    Sem isso, em alguns temas do Windows o QSS do QComboBox não é suficiente
+    para sobrescrever a paleta padrão herdada pela lista suspensa.
+    """
+    paleta_popup = campo.view().palette()
+    paleta_popup.setColor(QPalette.Base, QColor(Cores.SUPERFICIE))
+    paleta_popup.setColor(QPalette.Text, QColor(Cores.TEXTO_PRIMARIO))
+    paleta_popup.setColor(QPalette.Highlight, QColor(Cores.AZUL_PRIMARIO))
+    paleta_popup.setColor(QPalette.HighlightedText, QColor("white"))
+    campo.view().setPalette(paleta_popup)
 
 
 def _criar_cartao() -> QFrame:
@@ -785,6 +803,276 @@ class ObjetivoPrincipalStep(QWidget):
         self._label_erro_objetivo.hide()
 
 
+# -- Etapa 4: Frequência e tempo de treino --------------------------------
+
+
+class FrequenciaTreinoStep(QWidget):
+    """Etapa 4 do cadastro: frequência semanal e tempo de treino por dia.
+
+    Os dois campos são QComboBox com opções fixas (sem digitação livre) e já
+    abrem com um valor padrão selecionado, então sempre há uma seleção
+    válida — não existe estado "vazio" para o usuário deixar passar.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        layout_raiz = QVBoxLayout(self)
+        layout_raiz.setContentsMargins(0, 0, 0, 0)
+        layout_raiz.setSpacing(18)
+
+        # Cabeçalho — mesmo banner azul das demais etapas da anamnese.
+        cabecalho = QFrame()
+        cabecalho.setStyleSheet(
+            f"background-color: {Cores.AZUL_ESCURO}; border-radius: 14px;"
+        )
+        layout_cabecalho = QVBoxLayout(cabecalho)
+        layout_cabecalho.setContentsMargins(28, 20, 28, 20)
+        layout_cabecalho.setSpacing(4)
+
+        titulo_cabecalho = QLabel("Anamnese")
+        titulo_cabecalho.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: white; font-size: {Fontes.TAMANHO_TITULO}px; font-weight: 700;"
+        )
+        layout_cabecalho.addWidget(titulo_cabecalho)
+
+        subtitulo_cabecalho = QLabel("Etapa 4: Frequência e tempo de treino")
+        subtitulo_cabecalho.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: white; font-size: {Fontes.TAMANHO_TEXTO}px; font-weight: 500;"
+        )
+        layout_cabecalho.addWidget(subtitulo_cabecalho)
+
+        layout_raiz.addWidget(cabecalho)
+
+        # Card "Frequência semanal?" ------------------------------------
+        self._campo_frequencia = QComboBox()
+        for opcao in FREQUENCIA_SEMANAL_OPCOES:
+            self._campo_frequencia.addItem(opcao, userData=opcao)
+        _aplicar_paleta_clara_popup(self._campo_frequencia)
+        self._grupo_frequencia = _CampoFormulario(
+            "Frequência semanal?", self._campo_frequencia
+        )
+        layout_raiz.addWidget(self._empacotar_em_cartao(self._grupo_frequencia))
+
+        # Card "Tempo de Treino por dia?" ---------------------------------
+        self._campo_tempo_treino = QComboBox()
+        for opcao in TEMPO_TREINO_OPCOES:
+            self._campo_tempo_treino.addItem(opcao, userData=opcao)
+        _aplicar_paleta_clara_popup(self._campo_tempo_treino)
+        self._grupo_tempo_treino = _CampoFormulario(
+            "Tempo de Treino por dia?", self._campo_tempo_treino
+        )
+        layout_raiz.addWidget(self._empacotar_em_cartao(self._grupo_tempo_treino))
+
+        # Sem conteúdo suficiente para preencher a altura reservada pelo
+        # QStackedWidget, o espaço sobrando seria redistribuído entre
+        # cabeçalho e cards (mesmo motivo do stretch na Etapa 3).
+        layout_raiz.addStretch(1)
+
+        self.setTabOrder(self._campo_frequencia, self._campo_tempo_treino)
+
+    @staticmethod
+    def _empacotar_em_cartao(conteudo: QWidget) -> QFrame:
+        cartao = _criar_cartao()
+        layout_cartao = QVBoxLayout(cartao)
+        layout_cartao.setContentsMargins(28, 24, 28, 24)
+        layout_cartao.addWidget(conteudo)
+        return cartao
+
+    def obter_dados_validados(self):
+        """Valida a etapa; retorna um dict com os dados ou None se inválida."""
+        self._grupo_frequencia.limpar_erro()
+        self._grupo_tempo_treino.limpar_erro()
+
+        frequencia = self._campo_frequencia.currentData()
+        erro_frequencia = validar_frequencia_semanal(frequencia)
+
+        tempo_treino = self._campo_tempo_treino.currentData()
+        erro_tempo_treino = validar_tempo_treino_dia(tempo_treino)
+
+        valido = True
+        if erro_frequencia:
+            self._grupo_frequencia.mostrar_erro(erro_frequencia)
+            valido = False
+        if erro_tempo_treino:
+            self._grupo_tempo_treino.mostrar_erro(erro_tempo_treino)
+            valido = False
+
+        if not valido:
+            return None
+
+        return {
+            "frequencia_semanal": frequencia,
+            "tempo_treino_dia": tempo_treino,
+        }
+
+    def limpar(self) -> None:
+        self._campo_frequencia.setCurrentIndex(0)
+        self._campo_tempo_treino.setCurrentIndex(0)
+        self._grupo_frequencia.limpar_erro()
+        self._grupo_tempo_treino.limpar_erro()
+
+
+# -- Etapa 5: Histórico de saúde e limitações ------------------------------
+
+
+class _PerguntaSaude(QWidget):
+    """Uma linha 'pergunta + Sim/Não', com campo 'Qual?' que só aparece com Sim.
+
+    O campo fica oculto por padrão (sem reservar espaço — QHBoxLayout não
+    aloca espaço para widgets escondidos) e alterna de visibilidade sozinho,
+    ligado ao próprio estado do botão "Sim": marcou Sim → aparece; marcou Não
+    (o que desmarca o Sim, já que o grupo é exclusivo) → some.
+    """
+
+    def __init__(self, texto_pergunta: str, parent=None):
+        super().__init__(parent)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+
+        label = QLabel(texto_pergunta)
+        label.setWordWrap(True)
+        label.setFixedWidth(220)
+        label.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: {Cores.TEXTO_PRIMARIO}; font-size: {Fontes.TAMANHO_LABEL}px; font-weight: 600;"
+        )
+        layout.addWidget(label)
+
+        self._botao_sim = _BotaoOpcaoSimNao("Sim", positivo=True)
+        self._botao_nao = _BotaoOpcaoSimNao("Não", positivo=False)
+        layout.addWidget(self._botao_sim)
+        layout.addWidget(self._botao_nao)
+
+        # QButtonGroup garante a seleção única (Sim OU Não, nunca os dois).
+        self._grupo = QButtonGroup(self)
+        self._grupo.setExclusive(True)
+        self._grupo.addButton(self._botao_sim)
+        self._grupo.addButton(self._botao_nao)
+
+        self._campo_qual = QLineEdit()
+        self._campo_qual.setPlaceholderText("Qual?")
+        self._campo_qual.setStyleSheet(
+            f"""
+            QLineEdit {{
+                background-color: {Cores.SUPERFICIE};
+                border: 1px solid {Cores.BORDA};
+                border-radius: 10px;
+                padding-left: 14px;
+                font-size: 15px;
+                color: {Cores.TEXTO_PRIMARIO};
+                min-height: 54px;
+            }}
+            QLineEdit:focus {{ border: 1px solid {Cores.AZUL_PRIMARIO}; }}
+            """
+        )
+        self._campo_qual.hide()
+        layout.addWidget(self._campo_qual, stretch=1)
+
+        self._botao_sim.toggled.connect(self._campo_qual.setVisible)
+
+    def obter_resposta(self):
+        """Retorna (tem, qual): tem é 'Sim'/'Não'/None; qual só é preenchido se tem == 'Sim'."""
+        if self._botao_sim.isChecked():
+            tem = "Sim"
+        elif self._botao_nao.isChecked():
+            tem = "Não"
+        else:
+            tem = None
+
+        qual = self._campo_qual.text().strip() if tem == "Sim" else None
+        return tem, qual
+
+    def limpar(self) -> None:
+        # setExclusive(False) permite desmarcar os dois temporariamente: sob
+        # exclusividade normal, um QButtonGroup não deixa um botão marcado
+        # ser desmarcado sem marcar outro no lugar.
+        self._grupo.setExclusive(False)
+        self._botao_sim.setChecked(False)
+        self._botao_nao.setChecked(False)
+        self._grupo.setExclusive(True)
+        self._campo_qual.clear()
+
+
+# (chave usada nos dados coletados, texto da pergunta) de cada linha da etapa
+_PERGUNTAS_SAUDE = [
+    ("doenca", "Doença/Problema de saúde?"),
+    ("limitacao", "Limitação de movimento?"),
+    ("dor", "Dor em algum movimento?"),
+    ("cirurgia", "Cirurgia?"),
+]
+
+
+class HistoricoSaudeStep(QWidget):
+    """Etapa 5 do cadastro: doenças, limitações de movimento, dor e cirurgias."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        layout_raiz = QVBoxLayout(self)
+        layout_raiz.setContentsMargins(0, 0, 0, 0)
+        layout_raiz.setSpacing(18)
+
+        # Cabeçalho — mesmo banner azul das demais etapas da anamnese.
+        cabecalho = QFrame()
+        cabecalho.setStyleSheet(
+            f"background-color: {Cores.AZUL_ESCURO}; border-radius: 14px;"
+        )
+        layout_cabecalho = QVBoxLayout(cabecalho)
+        layout_cabecalho.setContentsMargins(28, 20, 28, 20)
+        layout_cabecalho.setSpacing(4)
+
+        titulo_cabecalho = QLabel("Anamnese")
+        titulo_cabecalho.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: white; font-size: {Fontes.TAMANHO_TITULO}px; font-weight: 700;"
+        )
+        layout_cabecalho.addWidget(titulo_cabecalho)
+
+        subtitulo_cabecalho = QLabel("Etapa 5: Histórico de saúde e limitações")
+        subtitulo_cabecalho.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: white; font-size: {Fontes.TAMANHO_TEXTO}px; font-weight: 500;"
+        )
+        layout_cabecalho.addWidget(subtitulo_cabecalho)
+
+        layout_raiz.addWidget(cabecalho)
+
+        # Card único com as quatro perguntas, uma por linha.
+        cartao = _criar_cartao()
+        layout_cartao = QVBoxLayout(cartao)
+        layout_cartao.setContentsMargins(28, 24, 28, 24)
+        layout_cartao.setSpacing(20)
+
+        self._perguntas = {}
+        for chave, texto in _PERGUNTAS_SAUDE:
+            pergunta = _PerguntaSaude(texto)
+            self._perguntas[chave] = pergunta
+            layout_cartao.addWidget(pergunta)
+
+        layout_raiz.addWidget(cartao)
+        # Mesmo motivo do stretch nas etapas 3 e 4: sem ele, o espaço restante
+        # da altura do QStackedWidget infla o cabeçalho e o card à toa.
+        layout_raiz.addStretch(1)
+
+    def obter_dados_validados(self):
+        """Sem campo obrigatório aqui: sempre retorna os dados coletados até agora."""
+        dados = {}
+        for chave, pergunta in self._perguntas.items():
+            tem, qual = pergunta.obter_resposta()
+            dados[f"{chave}_tem"] = tem
+            dados[f"{chave}_qual"] = qual
+        return dados
+
+    def limpar(self) -> None:
+        for pergunta in self._perguntas.values():
+            pergunta.limpar()
+
+
 class CadastroAlunoWizard(QWidget):
     """Container que controla a navegação entre as etapas do cadastro."""
 
@@ -831,7 +1119,13 @@ class CadastroAlunoWizard(QWidget):
         # só empilha as etapas — assim cada uma pode ter uma composição
         # visual diferente (um card só, vários cards, um banner) mantendo o
         # mesmo fundo e a mesma barra de navegação.
-        self._etapas = [DadosAlunoStep(), AnamneseStep(), ObjetivoPrincipalStep()]
+        self._etapas = [
+            DadosAlunoStep(),
+            AnamneseStep(),
+            ObjetivoPrincipalStep(),
+            FrequenciaTreinoStep(),
+            HistoricoSaudeStep(),
+        ]
 
         self._stack = QStackedWidget()
         for etapa in self._etapas:

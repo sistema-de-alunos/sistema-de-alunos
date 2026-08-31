@@ -18,6 +18,16 @@ class Aluno:
     tempo_sem_atividade: Optional[str] = None
     objetivo_principal: Optional[str] = None
     objetivo_outro: Optional[str] = None
+    frequencia_semanal: Optional[str] = None
+    tempo_treino_dia: Optional[str] = None
+    doenca_tem: Optional[str] = None
+    doenca_qual: Optional[str] = None
+    limitacao_tem: Optional[str] = None
+    limitacao_qual: Optional[str] = None
+    dor_tem: Optional[str] = None
+    dor_qual: Optional[str] = None
+    cirurgia_tem: Optional[str] = None
+    cirurgia_qual: Optional[str] = None
 
 
 class AlunoService:
@@ -33,6 +43,16 @@ class AlunoService:
         tempo_sem_atividade: Optional[str] = None,
         objetivo_principal: Optional[str] = None,
         objetivo_outro: Optional[str] = None,
+        frequencia_semanal: Optional[str] = None,
+        tempo_treino_dia: Optional[str] = None,
+        doenca_tem: Optional[str] = None,
+        doenca_qual: Optional[str] = None,
+        limitacao_tem: Optional[str] = None,
+        limitacao_qual: Optional[str] = None,
+        dor_tem: Optional[str] = None,
+        dor_qual: Optional[str] = None,
+        cirurgia_tem: Optional[str] = None,
+        cirurgia_qual: Optional[str] = None,
     ) -> Aluno:
         nome_completo = nome_completo.strip()
         conexao = obter_conexao()
@@ -42,14 +62,24 @@ class AlunoService:
                 INSERT INTO alunos (
                     nome_completo, idade, sexo,
                     treinou_antes, tempo_treinamento, tempo_sem_atividade,
-                    objetivo_principal, objetivo_outro
+                    objetivo_principal, objetivo_outro,
+                    frequencia_semanal, tempo_treino_dia,
+                    doenca_tem, doenca_qual,
+                    limitacao_tem, limitacao_qual,
+                    dor_tem, dor_qual,
+                    cirurgia_tem, cirurgia_qual
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     nome_completo, idade, sexo,
                     treinou_antes, tempo_treinamento, tempo_sem_atividade,
                     objetivo_principal, objetivo_outro,
+                    frequencia_semanal, tempo_treino_dia,
+                    doenca_tem, doenca_qual,
+                    limitacao_tem, limitacao_qual,
+                    dor_tem, dor_qual,
+                    cirurgia_tem, cirurgia_qual,
                 ),
             )
             conexao.commit()
@@ -122,4 +152,14 @@ class AlunoService:
             tempo_sem_atividade=linha["tempo_sem_atividade"],
             objetivo_principal=linha["objetivo_principal"],
             objetivo_outro=linha["objetivo_outro"],
+            frequencia_semanal=linha["frequencia_semanal"],
+            tempo_treino_dia=linha["tempo_treino_dia"],
+            doenca_tem=linha["doenca_tem"],
+            doenca_qual=linha["doenca_qual"],
+            limitacao_tem=linha["limitacao_tem"],
+            limitacao_qual=linha["limitacao_qual"],
+            dor_tem=linha["dor_tem"],
+            dor_qual=linha["dor_qual"],
+            cirurgia_tem=linha["cirurgia_tem"],
+            cirurgia_qual=linha["cirurgia_qual"],
         )
