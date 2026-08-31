@@ -62,6 +62,20 @@ def inicializar_banco() -> None:
                 dor_qual TEXT,
                 cirurgia_tem TEXT,
                 cirurgia_qual TEXT,
+                medida_ombro REAL,
+                medida_torax REAL,
+                medida_cintura REAL,
+                medida_abdominal REAL,
+                medida_quadril REAL,
+                medida_braco_e REAL,
+                medida_braco_e_contraido REAL,
+                medida_braco_d REAL,
+                medida_braco_d_contraido REAL,
+                medida_antebraco_d REAL,
+                medida_coxa_d REAL,
+                medida_coxa_e REAL,
+                medida_panturrilha_e REAL,
+                medida_panturrilha_d REAL,
                 criado_em TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             )
             """
@@ -82,7 +96,7 @@ def _garantir_colunas_anamnese(conexao: sqlite3.Connection) -> None:
     colunas_existentes = {
         linha["name"] for linha in conexao.execute("PRAGMA table_info(alunos)")
     }
-    colunas_novas = (
+    colunas_novas_texto = (
         "treinou_antes",
         "tempo_treinamento",
         "tempo_sem_atividade",
@@ -99,6 +113,27 @@ def _garantir_colunas_anamnese(conexao: sqlite3.Connection) -> None:
         "cirurgia_tem",
         "cirurgia_qual",
     )
-    for coluna in colunas_novas:
+    # Medidas da Etapa 6 (avaliação física) são numéricas -- REAL, não TEXT,
+    # para não perder o tipo ao ler de volta um banco criado antes delas.
+    colunas_novas_numericas = (
+        "medida_ombro",
+        "medida_torax",
+        "medida_cintura",
+        "medida_abdominal",
+        "medida_quadril",
+        "medida_braco_e",
+        "medida_braco_e_contraido",
+        "medida_braco_d",
+        "medida_braco_d_contraido",
+        "medida_antebraco_d",
+        "medida_coxa_d",
+        "medida_coxa_e",
+        "medida_panturrilha_e",
+        "medida_panturrilha_d",
+    )
+    for coluna in colunas_novas_texto:
         if coluna not in colunas_existentes:
             conexao.execute(f"ALTER TABLE alunos ADD COLUMN {coluna} TEXT")
+    for coluna in colunas_novas_numericas:
+        if coluna not in colunas_existentes:
+            conexao.execute(f"ALTER TABLE alunos ADD COLUMN {coluna} REAL")

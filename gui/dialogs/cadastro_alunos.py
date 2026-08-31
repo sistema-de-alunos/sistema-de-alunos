@@ -6,14 +6,20 @@ próprio conteúdo visual (título/cabeçalho + card(s)) — o wizard só cuida 
 fundo da página, da barra de navegação e de empilhar as etapas. Para
 adicionar uma nova etapa no futuro basta criar um QWidget com o mesmo
 formato — método `obter_dados_validados()` e `limpar()` — e incluí-lo na
-lista `self._etapas`.
+lista `self._etapas`. Uma etapa também pode, opcionalmente, definir
+`ao_entrar(dados_coletados)` para reagir a dados de etapas anteriores toda
+vez que é exibida (usado pela etapa de Avaliação Física para escolher o
+boneco anatômico de acordo com o sexo já cadastrado).
 """
+
+from typing import Dict, Optional
 
 from core.qt_core import (
     QByteArray,
     QButtonGroup,
     QColor,
     QComboBox,
+    QDoubleValidator,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -50,6 +56,12 @@ from core.validators import (
     validar_treinou_antes,
 )
 from gui.widgets.botao_principal import BotaoPrimario, BotaoSecundario
+from gui.widgets.corpo_interativo import (
+    CAMINHO_IMAGEM_MASCULINO,
+    IDS_REGIOES_MASCULINO,
+    PASTA_MASCARAS_MASCULINO,
+    CorpoInterativoWidget,
+)
 
 
 class _CampoFormulario(QWidget):
@@ -1073,6 +1085,244 @@ class HistoricoSaudeStep(QWidget):
             pergunta.limpar()
 
 
+# -- Etapa 6: Avaliação física ----------------------------------------------
+
+
+class _LinhaMedida(QWidget):
+    """Uma linha da tabela de medidas: rótulo + campo numérico (cm)."""
+
+    def __init__(self, texto_label: str, parent=None):
+        super().__init__(parent)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        label = QLabel(texto_label)
+        label.setFixedWidth(150)
+        label.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: {Cores.TEXTO_PRIMARIO}; font-size: {Fontes.TAMANHO_TEXTO}px; font-weight: 600;"
+        )
+        layout.addWidget(label)
+
+        self.campo = QLineEdit()
+        self.campo.setPlaceholderText("cm")
+        self.campo.setFixedWidth(80)
+        self.campo.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        validador = QDoubleValidator(0.0, 300.0, 1, self.campo)
+        validador.setNotation(QDoubleValidator.StandardNotation)
+        self.campo.setValidator(validador)
+        # Valor digitado precisa ser lido de relance: fonte maior e em negrito
+        # (14px normal ficava fraco/pequeno ao lado do rótulo em negrito),
+        # padding simétrico (só padding-left sem padding-right empurrava o
+        # texto right-aligned quase até a borda) e borda um pouco mais forte
+        # pra marcar bem a caixa contra o fundo branco do cartão.
+        self.campo.setStyleSheet(
+            f"""
+            QLineEdit {{
+                background-color: {Cores.SUPERFICIE};
+                border: 1.5px solid {Cores.BORDA};
+                border-radius: 8px;
+                padding: 0 10px;
+                font-size: 16px;
+                font-weight: 700;
+                color: {Cores.TEXTO_PRIMARIO};
+                min-height: 36px;
+            }}
+            QLineEdit:focus {{ border: 1.5px solid {Cores.AZUL_PRIMARIO}; }}
+            """
+        )
+        layout.addWidget(self.campo)
+        layout.addStretch(1)
+
+
+def _rotulo_secao_medidas(texto: str) -> QLabel:
+    label = QLabel(texto.upper())
+    label.setStyleSheet(
+        f"background: transparent; border: none; "
+        f"color: {Cores.TEXTO_SECUNDARIO}; font-size: 11px; font-weight: 700;"
+    )
+    return label
+
+
+def _texto_para_numero(texto: str) -> Optional[float]:
+    texto = (texto or "").strip().replace(",", ".")
+    if not texto:
+        return None
+    try:
+        return float(texto)
+    except ValueError:
+        return None
+
+
+# (chave, rótulo exibido, id da região correspondente no boneco). Mais de uma
+# linha pode apontar para a mesma região -- "Braço (E)" e "Braço (E)
+# Contraído" são medidas diferentes do mesmo músculo, e o boneco só precisa
+# saber que aquela região está sendo avaliada.
+_LINHAS_PARTE_SUPERIOR = [
+    ("ombro", "Ombro", "shoulder"),
+    ("torax", "Tórax", "chest"),
+    ("cintura", "Cintura", "waist"),
+    ("abdominal", "Abdominal", "abdomen"),
+    ("quadril", "Quadril", "hip"),
+]
+_LINHAS_BRACOS = [
+    ("braco_e", "Braço (E)", "left_arm"),
+    ("braco_e_contraido", "Braço (E) Contraído", "left_arm"),
+    ("braco_d", "Braço (D)", "right_arm"),
+    ("braco_d_contraido", "Braço (D) Contraído", "right_arm"),
+    ("antebraco_d", "Antebraço (D)", "right_forearm"),
+]
+_LINHAS_PARTE_INFERIOR = [
+    ("coxa_d", "Coxa D", "right_thigh"),
+    ("coxa_e", "Coxa E", "left_thigh"),
+    ("panturrilha_e", "Panturrilha E", "left_calf"),
+    ("panturrilha_d", "Panturrilha D", "right_calf"),
+]
+_REGIAO_POR_CHAVE = {
+    chave: regiao
+    for chave, _texto, regiao in _LINHAS_PARTE_SUPERIOR + _LINHAS_BRACOS + _LINHAS_PARTE_INFERIOR
+}
+
+
+class AvaliacaoFisicaStep(QWidget):
+    """Etapa 6 do cadastro: medidas corporais com boneco anatômico interativo.
+
+    O boneco não guarda estado próprio de avaliação: ele só reflete, em
+    tempo real, quais campos de medida têm valor preenchido. Preencher ou
+    apagar uma medida já atualiza o destaque sozinho — não existe uma
+    seleção separada para sincronizar.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        layout_raiz = QVBoxLayout(self)
+        layout_raiz.setContentsMargins(0, 0, 0, 0)
+        layout_raiz.setSpacing(18)
+
+        # Cabeçalho — mesmo banner azul das demais etapas da anamnese.
+        cabecalho = QFrame()
+        cabecalho.setStyleSheet(
+            f"background-color: {Cores.AZUL_ESCURO}; border-radius: 14px;"
+        )
+        layout_cabecalho = QVBoxLayout(cabecalho)
+        layout_cabecalho.setContentsMargins(28, 20, 28, 20)
+        layout_cabecalho.setSpacing(4)
+
+        titulo_cabecalho = QLabel("Anamnese")
+        titulo_cabecalho.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: white; font-size: {Fontes.TAMANHO_TITULO}px; font-weight: 700;"
+        )
+        layout_cabecalho.addWidget(titulo_cabecalho)
+
+        subtitulo_cabecalho = QLabel("Etapa 6: Avaliação física")
+        subtitulo_cabecalho.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: white; font-size: {Fontes.TAMANHO_TEXTO}px; font-weight: 500;"
+        )
+        layout_cabecalho.addWidget(subtitulo_cabecalho)
+
+        layout_raiz.addWidget(cabecalho)
+
+        # Card com tabela de medidas (esquerda) + boneco interativo (direita).
+        cartao = _criar_cartao()
+        layout_cartao = QHBoxLayout(cartao)
+        layout_cartao.setContentsMargins(28, 24, 28, 24)
+        layout_cartao.setSpacing(24)
+
+        coluna_tabela = QVBoxLayout()
+        coluna_tabela.setSpacing(10)
+
+        self._campos: Dict[str, QLineEdit] = {}
+
+        def _adicionar_secao(titulo, linhas):
+            coluna_tabela.addWidget(_rotulo_secao_medidas(titulo))
+            for chave, texto_label, _regiao in linhas:
+                linha = _LinhaMedida(texto_label)
+                linha.campo.textChanged.connect(self._recalcular_destaques)
+                self._campos[chave] = linha.campo
+                coluna_tabela.addWidget(linha)
+
+        _adicionar_secao("Parte superior", _LINHAS_PARTE_SUPERIOR)
+        _adicionar_secao("Braços", _LINHAS_BRACOS)
+        _adicionar_secao("Parte inferior", _LINHAS_PARTE_INFERIOR)
+        coluna_tabela.addStretch(1)
+
+        layout_cartao.addLayout(coluna_tabela, stretch=3)
+
+        # Só existe asset do boneco masculino por enquanto; o feminino usa um
+        # placeholder até o asset correspondente ser fornecido (cada modelo
+        # precisa do seu próprio mapeamento de regiões — não dá pra "chutar"
+        # um agora). `ao_entrar` decide qual das duas páginas mostrar.
+        self._pilha_corpo = QStackedWidget()
+
+        self._corpo_masculino = CorpoInterativoWidget(
+            CAMINHO_IMAGEM_MASCULINO, PASTA_MASCARAS_MASCULINO, IDS_REGIOES_MASCULINO
+        )
+        self._corpo_masculino.regiao_clicada.connect(self._focar_campo_da_regiao)
+        self._pilha_corpo.addWidget(self._corpo_masculino)
+
+        self._placeholder_corpo = QLabel("Ilustração feminina\nem breve")
+        self._placeholder_corpo.setAlignment(Qt.AlignCenter)
+        self._placeholder_corpo.setWordWrap(True)
+        self._placeholder_corpo.setStyleSheet(
+            f"background-color: {Cores.FUNDO}; border: 1px dashed {Cores.BORDA}; "
+            f"border-radius: 12px; color: {Cores.TEXTO_SECUNDARIO}; "
+            f"font-size: 13px; font-weight: 600;"
+        )
+        self._pilha_corpo.addWidget(self._placeholder_corpo)
+
+        layout_cartao.addWidget(self._pilha_corpo, stretch=2)
+
+        layout_raiz.addWidget(cartao)
+        layout_raiz.addStretch(1)
+
+        self._recalcular_destaques()
+
+    def ao_entrar(self, dados_coletados: dict) -> None:
+        """Chamado pelo wizard toda vez que essa etapa é exibida.
+
+        Escolhe o boneco de acordo com o sexo já preenchido na Etapa 1 — o
+        masculino não deve controlar o feminino nem vice-versa.
+        """
+        sexo = dados_coletados.get("sexo")
+        self._pilha_corpo.setCurrentWidget(
+            self._corpo_masculino if sexo == "Masculino" else self._placeholder_corpo
+        )
+
+    def _recalcular_destaques(self) -> None:
+        regioes_ativas = {
+            _REGIAO_POR_CHAVE[chave]
+            for chave, campo in self._campos.items()
+            if campo.text().strip()
+        }
+        self._corpo_masculino.definir_regioes_selecionadas(regioes_ativas)
+
+    def _focar_campo_da_regiao(self, regiao_id: str) -> None:
+        """Interação inversa (item 14): clicar no boneco foca o primeiro
+        campo daquela região na tabela, pronto para o personal digitar."""
+        for chave, id_regiao in _REGIAO_POR_CHAVE.items():
+            if id_regiao == regiao_id:
+                campo = self._campos[chave]
+                campo.setFocus()
+                campo.selectAll()
+                return
+
+    def obter_dados_validados(self):
+        """Sem campo obrigatório: sempre retorna as medidas preenchidas até agora."""
+        return {
+            f"medida_{chave}": _texto_para_numero(campo.text())
+            for chave, campo in self._campos.items()
+        }
+
+    def limpar(self) -> None:
+        for campo in self._campos.values():
+            campo.clear()
+
+
 class CadastroAlunoWizard(QWidget):
     """Container que controla a navegação entre as etapas do cadastro."""
 
@@ -1125,6 +1375,7 @@ class CadastroAlunoWizard(QWidget):
             ObjetivoPrincipalStep(),
             FrequenciaTreinoStep(),
             HistoricoSaudeStep(),
+            AvaliacaoFisicaStep(),
         ]
 
         self._stack = QStackedWidget()
@@ -1173,6 +1424,7 @@ class CadastroAlunoWizard(QWidget):
         self._etapa_atual -= 1
         self._stack.setCurrentIndex(self._etapa_atual)
         self._atualizar_botoes()
+        self._notificar_entrada_etapa()
 
     def _proximo_clicado(self) -> None:
         self._label_erro_geral.hide()
@@ -1187,8 +1439,17 @@ class CadastroAlunoWizard(QWidget):
             self._etapa_atual += 1
             self._stack.setCurrentIndex(self._etapa_atual)
             self._atualizar_botoes()
+            self._notificar_entrada_etapa()
         else:
             self._salvar_aluno()
+
+    def _notificar_entrada_etapa(self) -> None:
+        """Avisa a etapa que acabou de ficar visível, se ela quiser reagir a
+        dados de etapas anteriores (ver `ao_entrar` no topo do arquivo)."""
+        etapa_atual = self._etapas[self._etapa_atual]
+        ao_entrar = getattr(etapa_atual, "ao_entrar", None)
+        if ao_entrar is not None:
+            ao_entrar(self._dados_coletados)
 
     def _salvar_aluno(self) -> None:
         try:

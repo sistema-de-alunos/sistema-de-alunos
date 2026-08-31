@@ -28,6 +28,20 @@ class Aluno:
     dor_qual: Optional[str] = None
     cirurgia_tem: Optional[str] = None
     cirurgia_qual: Optional[str] = None
+    medida_ombro: Optional[float] = None
+    medida_torax: Optional[float] = None
+    medida_cintura: Optional[float] = None
+    medida_abdominal: Optional[float] = None
+    medida_quadril: Optional[float] = None
+    medida_braco_e: Optional[float] = None
+    medida_braco_e_contraido: Optional[float] = None
+    medida_braco_d: Optional[float] = None
+    medida_braco_d_contraido: Optional[float] = None
+    medida_antebraco_d: Optional[float] = None
+    medida_coxa_d: Optional[float] = None
+    medida_coxa_e: Optional[float] = None
+    medida_panturrilha_e: Optional[float] = None
+    medida_panturrilha_d: Optional[float] = None
 
 
 class AlunoService:
@@ -53,6 +67,20 @@ class AlunoService:
         dor_qual: Optional[str] = None,
         cirurgia_tem: Optional[str] = None,
         cirurgia_qual: Optional[str] = None,
+        medida_ombro: Optional[float] = None,
+        medida_torax: Optional[float] = None,
+        medida_cintura: Optional[float] = None,
+        medida_abdominal: Optional[float] = None,
+        medida_quadril: Optional[float] = None,
+        medida_braco_e: Optional[float] = None,
+        medida_braco_e_contraido: Optional[float] = None,
+        medida_braco_d: Optional[float] = None,
+        medida_braco_d_contraido: Optional[float] = None,
+        medida_antebraco_d: Optional[float] = None,
+        medida_coxa_d: Optional[float] = None,
+        medida_coxa_e: Optional[float] = None,
+        medida_panturrilha_e: Optional[float] = None,
+        medida_panturrilha_d: Optional[float] = None,
     ) -> Aluno:
         nome_completo = nome_completo.strip()
         conexao = obter_conexao()
@@ -67,9 +95,19 @@ class AlunoService:
                     doenca_tem, doenca_qual,
                     limitacao_tem, limitacao_qual,
                     dor_tem, dor_qual,
-                    cirurgia_tem, cirurgia_qual
+                    cirurgia_tem, cirurgia_qual,
+                    medida_ombro, medida_torax, medida_cintura,
+                    medida_abdominal, medida_quadril,
+                    medida_braco_e, medida_braco_e_contraido,
+                    medida_braco_d, medida_braco_d_contraido,
+                    medida_antebraco_d,
+                    medida_coxa_d, medida_coxa_e,
+                    medida_panturrilha_e, medida_panturrilha_d
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
                 """,
                 (
                     nome_completo, idade, sexo,
@@ -80,6 +118,13 @@ class AlunoService:
                     limitacao_tem, limitacao_qual,
                     dor_tem, dor_qual,
                     cirurgia_tem, cirurgia_qual,
+                    medida_ombro, medida_torax, medida_cintura,
+                    medida_abdominal, medida_quadril,
+                    medida_braco_e, medida_braco_e_contraido,
+                    medida_braco_d, medida_braco_d_contraido,
+                    medida_antebraco_d,
+                    medida_coxa_d, medida_coxa_e,
+                    medida_panturrilha_e, medida_panturrilha_d,
                 ),
             )
             conexao.commit()
@@ -162,4 +207,18 @@ class AlunoService:
             dor_qual=linha["dor_qual"],
             cirurgia_tem=linha["cirurgia_tem"],
             cirurgia_qual=linha["cirurgia_qual"],
+            medida_ombro=linha["medida_ombro"],
+            medida_torax=linha["medida_torax"],
+            medida_cintura=linha["medida_cintura"],
+            medida_abdominal=linha["medida_abdominal"],
+            medida_quadril=linha["medida_quadril"],
+            medida_braco_e=linha["medida_braco_e"],
+            medida_braco_e_contraido=linha["medida_braco_e_contraido"],
+            medida_braco_d=linha["medida_braco_d"],
+            medida_braco_d_contraido=linha["medida_braco_d_contraido"],
+            medida_antebraco_d=linha["medida_antebraco_d"],
+            medida_coxa_d=linha["medida_coxa_d"],
+            medida_coxa_e=linha["medida_coxa_e"],
+            medida_panturrilha_e=linha["medida_panturrilha_e"],
+            medida_panturrilha_d=linha["medida_panturrilha_d"],
         )
