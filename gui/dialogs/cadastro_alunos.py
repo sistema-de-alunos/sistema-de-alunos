@@ -32,7 +32,9 @@ from core.qt_core import (
     QEasingCurve,
     QPushButton,
     Qt,
+    QScrollArea,
     QSize,
+    QSizePolicy,
     QStackedWidget,
     QSvgRenderer,
     QTextEdit,
@@ -1096,7 +1098,7 @@ class _LinhaMedida(QWidget):
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(16)
 
         label = QLabel(texto_label)
         label.setFixedWidth(150)
@@ -1108,8 +1110,23 @@ class _LinhaMedida(QWidget):
 
         self.campo = QLineEdit()
         self.campo.setPlaceholderText("cm")
-        self.campo.setFixedWidth(80)
-        self.campo.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        # Desliga o frame nativo do QLineEdit (o "sunken panel" que o estilo
+        # do Windows desenha por baixo do widget). Com ele ligado, o estilo
+        # nativo soma sua própria borda 3D (mais clara embaixo/à direita,
+        # para simular profundidade) por cima da borda de 4 lados definida
+        # no QSS abaixo -- em telas com escala fracionária (125%/150%), essa
+        # borda nativa clara some contra o fundo branco exatamente no lado de
+        # baixo, dando a impressão de "borda inferior aberta". Desativando o
+        # frame nativo, a única borda desenhada passa a ser a do QSS, igual
+        # e fechada nos 4 lados.
+        self.campo.setFrame(False)
+        # 96px (e não os 80px originais) -- com padding 10px de cada lado e
+        # fonte 16px em negrito, "120" (o maior valor plausível, ver
+        # QDoubleValidator abaixo) quase encostava na borda; centralizado
+        # (não mais alinhado à direita) fica claramente separado do rótulo à
+        # esquerda mesmo já com o espaçamento maior do layout.
+        self.campo.setFixedWidth(96)
+        self.campo.setAlignment(Qt.AlignCenter)
         validador = QDoubleValidator(0.0, 300.0, 1, self.campo)
         validador.setNotation(QDoubleValidator.StandardNotation)
         self.campo.setValidator(validador)
@@ -1172,6 +1189,7 @@ _LINHAS_BRACOS = [
     ("braco_e_contraido", "Braço (E) Contraído", "left_arm"),
     ("braco_d", "Braço (D)", "right_arm"),
     ("braco_d_contraido", "Braço (D) Contraído", "right_arm"),
+    ("antebraco_e", "Antebraço (E)", "left_forearm"),
     ("antebraco_d", "Antebraço (D)", "right_forearm"),
 ]
 _LINHAS_PARTE_INFERIOR = [
@@ -1229,12 +1247,41 @@ class AvaliacaoFisicaStep(QWidget):
 
         # Card com tabela de medidas (esquerda) + boneco interativo (direita).
         cartao = _criar_cartao()
+        # Antes, o cartão nunca precisava disto: sem o QScrollArea acima, o
+        # tamanho natural da tabela (~1000px) sempre excedia o espaço
+        # disponível, e o cartão acabava ocupando tudo por pura falta de
+        # alternativa. Agora que a tabela pode ficar compacta e rolar, o
+        # cartão precisa de Expanding explícito para continuar preenchendo a
+        # altura disponível -- do contrário ele encolheria para o tamanho
+        # natural do boneco (bem menor) e sobraria um vão vazio embaixo.
+        cartao.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         layout_cartao = QHBoxLayout(cartao)
         layout_cartao.setContentsMargins(28, 24, 28, 24)
         layout_cartao.setSpacing(24)
 
-        coluna_tabela = QVBoxLayout()
-        coluna_tabela.setSpacing(10)
+        # As 18 linhas (label + campo) empilhadas somam ~1000px de altura --
+        # bem mais do que cabe numa janela normal (960x600, o mínimo do
+        # app). Sem isto, o QVBoxLayout abaixo empurra sua altura mínima
+        # inteira pra cima até o QStackedWidget do wizard e daí até a janela
+        # principal: a tela só "funcionava" quando maximizada/fullscreen
+        # porque só aí sobrava altura de tela suficiente para acomodar esse
+        # mínimo -- em qualquer janela menor, as linhas ficavam espremidas
+        # abaixo do próprio tamanho mínimo (é aí que a borda inferior dos
+        # QLineEdit some: o conteúdo é cortado pela borda da janela/card,
+        # não um problema de estilo). Um QScrollArea rola o EXCESSO em vez
+        # de forçar a janela toda a crescer -- a tabela some no scroll só
+        # quando realmente não há espaço, mas nunca fica cortada/espremida.
+        painel_tabela = QWidget()
+        painel_tabela.setStyleSheet("background: transparent;")
+        coluna_tabela = QVBoxLayout(painel_tabela)
+        coluna_tabela.setContentsMargins(0, 0, 4, 0)
+        # 16 (e não os 10 originais) -- espaço ENTRE uma linha (rótulo +
+        # campo) e a próxima, não dentro de cada uma: com 18 linhas
+        # empilhadas, 10px deixava a coluna toda com aparência "amontoada".
+        # Não é padding do QLineEdit -- é o spacing deste QVBoxLayout, que
+        # empilha os `_LinhaMedida` (ver ali o spacing irmão, entre rótulo e
+        # campo dentro da mesma linha).
+        coluna_tabela.setSpacing(16)
 
         self._campos: Dict[str, QLineEdit] = {}
 
@@ -1251,7 +1298,17 @@ class AvaliacaoFisicaStep(QWidget):
         _adicionar_secao("Parte inferior", _LINHAS_PARTE_INFERIOR)
         coluna_tabela.addStretch(1)
 
-        layout_cartao.addLayout(coluna_tabela, stretch=3)
+        rolagem_tabela = QScrollArea()
+        rolagem_tabela.setWidget(painel_tabela)
+        rolagem_tabela.setWidgetResizable(True)
+        rolagem_tabela.setFrameShape(QFrame.NoFrame)
+        rolagem_tabela.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        rolagem_tabela.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        rolagem_tabela.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; } "
+            "QScrollArea > QWidget > QWidget { background: transparent; }"
+        )
+        layout_cartao.addWidget(rolagem_tabela, stretch=3)
 
         # Só existe asset do boneco masculino por enquanto; o feminino usa um
         # placeholder até o asset correspondente ser fornecido (cada modelo
@@ -1277,8 +1334,11 @@ class AvaliacaoFisicaStep(QWidget):
 
         layout_cartao.addWidget(self._pilha_corpo, stretch=2)
 
-        layout_raiz.addWidget(cartao)
-        layout_raiz.addStretch(1)
+        # stretch=1 (e sem addStretch depois) -- com o cartão já Expanding,
+        # ele deve consumir o espaço vertical sobrando abaixo do cabeçalho;
+        # um addStretch aqui competiria por esse mesmo espaço e voltaria a
+        # deixar o cartão pequeno e colado no topo, com vão vazio embaixo.
+        layout_raiz.addWidget(cartao, stretch=1)
 
         self._recalcular_destaques()
 

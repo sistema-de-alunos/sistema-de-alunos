@@ -37,6 +37,7 @@ class Aluno:
     medida_braco_e_contraido: Optional[float] = None
     medida_braco_d: Optional[float] = None
     medida_braco_d_contraido: Optional[float] = None
+    medida_antebraco_e: Optional[float] = None
     medida_antebraco_d: Optional[float] = None
     medida_coxa_d: Optional[float] = None
     medida_coxa_e: Optional[float] = None
@@ -76,6 +77,7 @@ class AlunoService:
         medida_braco_e_contraido: Optional[float] = None,
         medida_braco_d: Optional[float] = None,
         medida_braco_d_contraido: Optional[float] = None,
+        medida_antebraco_e: Optional[float] = None,
         medida_antebraco_d: Optional[float] = None,
         medida_coxa_d: Optional[float] = None,
         medida_coxa_e: Optional[float] = None,
@@ -100,13 +102,13 @@ class AlunoService:
                     medida_abdominal, medida_quadril,
                     medida_braco_e, medida_braco_e_contraido,
                     medida_braco_d, medida_braco_d_contraido,
-                    medida_antebraco_d,
+                    medida_antebraco_e, medida_antebraco_d,
                     medida_coxa_d, medida_coxa_e,
                     medida_panturrilha_e, medida_panturrilha_d
                 )
                 VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -122,7 +124,7 @@ class AlunoService:
                     medida_abdominal, medida_quadril,
                     medida_braco_e, medida_braco_e_contraido,
                     medida_braco_d, medida_braco_d_contraido,
-                    medida_antebraco_d,
+                    medida_antebraco_e, medida_antebraco_d,
                     medida_coxa_d, medida_coxa_e,
                     medida_panturrilha_e, medida_panturrilha_d,
                 ),
@@ -216,6 +218,7 @@ class AlunoService:
             medida_braco_e_contraido=linha["medida_braco_e_contraido"],
             medida_braco_d=linha["medida_braco_d"],
             medida_braco_d_contraido=linha["medida_braco_d_contraido"],
+            medida_antebraco_e=linha["medida_antebraco_e"],
             medida_antebraco_d=linha["medida_antebraco_d"],
             medida_coxa_d=linha["medida_coxa_d"],
             medida_coxa_e=linha["medida_coxa_e"],

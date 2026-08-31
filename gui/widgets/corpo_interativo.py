@@ -53,6 +53,7 @@ IDS_REGIOES_MASCULINO = (
     "left_arm",
     "right_arm",
     "right_forearm",
+    "left_forearm",
     "left_thigh",
     "right_thigh",
     "left_calf",

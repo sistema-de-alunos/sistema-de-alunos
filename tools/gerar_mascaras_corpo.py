@@ -36,9 +36,9 @@ Etapas:
   3. Marcadores: um disco pequeno em cada ponto de `SEMENTES`, com o mesmo id
      para sementes do mesmo nome (regiões com mais de uma parte, ex.: duas
      sementes para os dois lóbulos do peitoral em "chest"). Nomes que
-     começam com "ignore_" são sorvedouros (rosto, pescoço, mãos, pés, o
-     antebraço esquerdo que não tem linha na tabela) -- existem só para
-     impedir que essas áreas sejam anexadas às regiões vizinhas nomeadas.
+     começam com "ignore_" são sorvedouros (rosto, pescoço, mãos, pés) --
+     existem só para impedir que essas áreas sejam anexadas às regiões
+     vizinhas nomeadas.
   4. `skimage.segmentation.watershed` restrito à silhueta (`mask=corpo_mask`).
   5. Por região: fecha buracos pequenos, remove manchas espúrias, suaviza a
      borda (blur do alfa binário) para anti-aliasing, reforça um anel mais
@@ -132,7 +132,7 @@ SEMENTES = {
     # -- um pedaço sem nenhuma semente por perto ficava pra "hip" (o vazio
     # virava um degrau reto, a própria borda da zona de exclusão).
     "right_forearm": [(0.235, 0.43), (0.28, 0.38), (0.26, 0.48)],
-    "ignore_forearm_left": [(0.765, 0.43), (0.72, 0.38), (0.74, 0.48)],
+    "left_forearm": [(0.765, 0.43), (0.72, 0.38), (0.74, 0.48)],
     "ignore_hand_right": [(0.19, 0.53), (0.22, 0.45), (0.30, 0.45), (0.35, 0.45)],
     "ignore_hand_left": [(0.81, 0.53), (0.78, 0.45), (0.70, 0.45), (0.65, 0.44)],
     "right_thigh": [(0.40, 0.50), (0.38, 0.55), (0.41, 0.60)],
@@ -151,21 +151,60 @@ SEMENTES = {
 # normalmente. Calibradas verificando que nenhuma semente de músculo cai
 # fora da silhueta final e que pontos conhecidos dentro desses vãos (entre a
 # mão e o quadril, dos dois lados) continuam fora dela.
+#
+# (O vão entre as duas pernas tem o mesmo problema -- o fechamento também o
+# solda entre a virilha e perto do tornozelo -- mas restaurá-lo aqui mexe na
+# silhueta usada por TODAS as regiões e mudava também "hip"/"abdomen" [parte
+# superior, que não pode mudar]. Ver LIMITE_LATERAL/LIMITE_SUPERIOR de
+# coxa/panturrilha abaixo: mesmo problema, corrigido só nessas máscaras.)
 ZONAS_EXCLUSAO_FECHAMENTO = [
     (0.24, 0.37, 0.395, 0.50),
     (0.63, 0.76, 0.395, 0.50),
 ]
 
-# Trava lateral extra (fração x mín, máx) só pra "hip": mesmo com as
-# sementes de antebraço/mão mais densas, um fragmento fino e reto de
-# antebraço dentro de ZONAS_EXCLUSAO_FECHAMENTO (onde a silhueta volta a
-# ser o contorno bruto, sem o fechamento) ainda ficava sem nenhuma semente
-# por perto e "hip" o herdava -- visível como um degrau reto na borda
-# lateral. "hip" não tem por que se estender além disso de qualquer forma
-# (é a região mais central do tronco/virilha), então é um cinto de
-# segurança geométrico direto em vez de perseguir mais sementes.
+# Trava lateral extra (fração x mín, máx): mesmo com as sementes de
+# antebraço/mão mais densas, um fragmento fino e reto de antebraço dentro de
+# ZONAS_EXCLUSAO_FECHAMENTO (onde a silhueta volta a ser o contorno bruto,
+# sem o fechamento) ainda ficava sem nenhuma semente por perto e "hip" o
+# herdava -- visível como um degrau reto na borda lateral. "hip" não tem por
+# que se estender além disso de qualquer forma (é a região mais central do
+# tronco/virilha), então é um cinto de segurança geométrico direto em vez de
+# perseguir mais sementes.
+#
+# "right_thigh"/"right_calf"/"left_thigh"/"left_calf" entraram aqui pelo
+# mesmo motivo, mas por uma causa raiz diferente: o vão real entre as pernas
+# (da virilha até perto do tornozelo) é mais estreito que
+# RAIO_FECHAMENTO_SILHUETA nesse trecho, então o fechamento da silhueta o
+# solda por engano (o vão só reaparece na silhueta final abaixo do
+# tornozelo) -- e o watershed, restrito a essa silhueta "soldada", pinta
+# perna de fundo ali (confirmado lendo os pixels: cor de fundo, não de
+# pele). Excluir esse vão inteiro do fechamento (como já existe pra
+# axila/quadril) resolveria na raiz, mas mexe na silhueta usada por TODAS as
+# regiões -- inclusive "hip" (parte superior, que não pode mudar). Uma trava
+# simples na linha média (nenhuma coxa/panturrilha tem razão anatômica pra
+# cruzar pro outro lado do corpo) corrige o vazamento sem tocar na silhueta
+# compartilhada nem nas sementes de nenhuma outra região.
 LIMITE_LATERAL = {
     "hip": (0.39, 0.61),
+    "right_thigh": (0.0, 0.50),
+    "left_thigh": (0.50, 1.0),
+    "right_calf": (0.0, 0.44),
+    "left_calf": (0.56, 1.0),
+}
+
+# Trava vertical (fração y mínima) para "right_calf"/"left_calf": o sulco
+# entre coxa e panturrilha quase some na face medial do joelho (baixo
+# gradiente ali), e sem essa trava a panturrilha "subia" por dentro bem
+# acima da dobra real do joelho -- sobrepondo boa parte da própria máscara
+# da coxa nessa faixa. Adicionar semente de coxa ali resolvia esse ponto mas
+# mudava também o contorno de "hip" (região vizinha, parte superior, que
+# não pode ser tocada) -- por isso é um cinto de segurança geométrico direto
+# na panturrilha em vez de mexer em sementes de outra região. Calibrado nos
+# poucos px acima do topo real (não-vazado) da panturrilha, checado nos
+# dois lados.
+LIMITE_SUPERIOR = {
+    "right_calf": 0.655,
+    "left_calf": 0.655,
 }
 
 
@@ -260,6 +299,9 @@ def main() -> None:
             binaria = binaria.copy()
             binaria[:, : int(x0f * w)] = False
             binaria[:, int(x1f * w) :] = False
+        if nome in LIMITE_SUPERIOR:
+            binaria = binaria.copy()
+            binaria[: int(LIMITE_SUPERIOR[nome] * h), :] = False
         salvar_mascara(PASTA_SAIDA / f"{nome}.png", binaria, corpo_mask, h, w)
         print(f"{nome}: {binaria.sum()} px -> {PASTA_SAIDA / f'{nome}.png'}")
 
