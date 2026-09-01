@@ -20,6 +20,7 @@ from core.qt_core import (
     QColor,
     QComboBox,
     QDoubleValidator,
+    QFont,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -1155,10 +1156,24 @@ class _LinhaMedida(QWidget):
 
 
 def _rotulo_secao_medidas(texto: str) -> QLabel:
+    """Título de uma divisão da tabela (PARTE SUPERIOR / BRAÇOS / PARTE
+    INFERIOR) -- só um rótulo com mais destaque que os das medidas abaixo
+    dele, pra deixar a hierarquia das três divisões clara sem criar card,
+    botão ou container novo. `margin-top` (além do spacing já uniforme do
+    QVBoxLayout que empilha a coluna) é o que separa visualmente esta seção
+    das linhas da seção anterior; a borda inferior faz as vezes do "risco"
+    que normalmente marcaria o fim de um cabeçalho.
+    """
     label = QLabel(texto.upper())
+    fonte = label.font()
+    fonte.setPointSize(fonte.pointSize() + 1)
+    fonte.setWeight(QFont.ExtraBold)
+    fonte.setLetterSpacing(QFont.PercentageSpacing, 106)
+    label.setFont(fonte)
     label.setStyleSheet(
-        f"background: transparent; border: none; "
-        f"color: {Cores.TEXTO_SECUNDARIO}; font-size: 11px; font-weight: 700;"
+        f"background: transparent; "
+        f"border: none; border-bottom: 2px solid {Cores.AZUL_PRIMARIO}; "
+        f"color: {Cores.AZUL_ESCURO}; padding-bottom: 5px; margin-top: 6px;"
     )
     return label
 

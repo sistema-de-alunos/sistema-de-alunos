@@ -202,9 +202,31 @@ LIMITE_LATERAL = {
 # na panturrilha em vez de mexer em sementes de outra região. Calibrado nos
 # poucos px acima do topo real (não-vazado) da panturrilha, checado nos
 # dois lados.
+#
+# "right_forearm": mesmo fenômeno na dobra do cotovelo -- o vinco/tendão ali
+# tem gradiente fraco, e a região "vazava" para cima em uma agulha fina até
+# dentro do braço (bíceps/tríceps), confirmado lendo o perfil de largura por
+# linha da máscara bruta: a largura salta de ~8px para ~23px exatamente na
+# fração 0.348-0.350 (a agulha some, começa o antebraço de verdade). Trava
+# calibrada logo abaixo desse salto, no próprio vinco visível na ilustração
+# (~0.335-0.365). "left_forearm" não tem essa trava porque não apresentou o
+# mesmo salto no perfil (não fazia parte da correção pedida).
+#
+# "right_thigh"/"left_thigh": a mesma agulha fina aparece subindo até dentro
+# da virilha/quadril -- só que aqui a causa raiz é a zona de exclusão do
+# fechamento da silhueta (ZONAS_EXCLUSAO_FECHAMENTO, usada pra restaurar o
+# vão real entre mão e quadril): a borda dessa zona vira uma costura reta na
+# silhueta ali perto, e a coxa escapa por ela. Confirmado no perfil de
+# largura por linha: "right_thigh" salta de 59px pra 112px bem na fração
+# 0.501 (a agulha, com só 1-a-poucos px de largura, termina exatamente aí);
+# "left_thigh" salta de 88px pra 97px em 0.532. Sementes calibradas nesses
+# saltos, checando os dois lados separadamente (o salto não é simétrico).
 LIMITE_SUPERIOR = {
     "right_calf": 0.655,
     "left_calf": 0.655,
+    "right_forearm": 0.350,
+    "right_thigh": 0.501,
+    "left_thigh": 0.532,
 }
 
 
@@ -235,13 +257,30 @@ def calcular_silhueta(gray: np.ndarray) -> np.ndarray:
     return corpo_bruto | (corpo_fechado & ~zona_exclusao)
 
 
-def salvar_mascara(caminho: Path, binaria: np.ndarray, corpo_mask: np.ndarray, h: int, w: int) -> None:
+
+# Raio do fechamento em `salvar_mascara` (o padrão é 4 -- ver abaixo). Só
+# "waist" está aqui: a borda dela contra o tórax segue as interdigitações
+# reais do serrátil, que na ilustração aparecem como um serrilhado bem miúdo
+# (dentes de poucos px) -- com o fechamento padrão isso é preservado quase
+# fiel demais, e o contorno lê como "picotado"/impreciso em vez de uma curva
+# única. Um raio maior aqui só arredonda esses dentes pequenos (fechamento
+# não desloca a borda geral, só funde reentrâncias menores que o raio) --
+# continua recortado pela silhueta no final, então não pode fazer a região
+# invadir o fundo nem crescer além do que já cresceria com o raio padrão.
+FECHAMENTO_EXTRA = {
+    "waist": 7,
+}
+
+
+def salvar_mascara(
+    caminho: Path, binaria: np.ndarray, corpo_mask: np.ndarray, h: int, w: int, raio_fechamento: int = 4
+) -> None:
     # Fecha falhas pequenas (gaps entre blocos vizinhos do mesmo músculo,
     # ex.: as junções finas entre os blocos do abdômen) antes de remover
     # manchas espúrias -- na ordem inversa, a abertura chegava a fragmentar
     # ligações finas legítimas entre blocos adjacentes, deixando bordas
     # "escorridas"/irregulares em vez de um contorno limpo.
-    binaria = m_close(binaria, morph_disk(4))
+    binaria = m_close(binaria, morph_disk(raio_fechamento))
     binaria = remove_small_objects(binaria, min_size=250)
     binaria = m_open(binaria, morph_disk(1))
 
@@ -302,7 +341,10 @@ def main() -> None:
         if nome in LIMITE_SUPERIOR:
             binaria = binaria.copy()
             binaria[: int(LIMITE_SUPERIOR[nome] * h), :] = False
-        salvar_mascara(PASTA_SAIDA / f"{nome}.png", binaria, corpo_mask, h, w)
+        salvar_mascara(
+            PASTA_SAIDA / f"{nome}.png", binaria, corpo_mask, h, w,
+            raio_fechamento=FECHAMENTO_EXTRA.get(nome, 4),
+        )
         print(f"{nome}: {binaria.sum()} px -> {PASTA_SAIDA / f'{nome}.png'}")
 
     # visualização de depuração: cada região com uma cor diferente, pra
