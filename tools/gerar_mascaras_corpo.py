@@ -82,7 +82,7 @@ from skimage.morphology import (
     binary_opening as m_open,
     remove_small_objects,
 )
-from skimage.draw import disk as draw_disk
+from skimage.draw import disk as draw_disk, polygon as draw_polygon
 
 RAIZ = Path(__file__).resolve().parent.parent
 IMAGEM = RAIZ / "assets" / "corpos" / "corpohomem.png"
@@ -230,6 +230,75 @@ LIMITE_SUPERIOR = {
 }
 
 
+# "waist" é a ÚNICA região que não usa o resultado bruto do watershed
+# (`rotulos_ws == idx`) como máscara final -- ver o `if nome == "waist"` em
+# `main()`. Motivo: o oblíquo externo/serrátil ali tem textura de fibra
+# muito sutil (mesmo nível de cinza do tórax/abdômen vizinhos após o blur
+# do gradiente), então o watershed, sem uma borda forte pra seguir, cai de
+# volta na regra de distância (ponderada por COMPACTNESS) entre sementes
+# vizinhas -- o que produz uma divisão quase reta/simétrica em vez de
+# acompanhar o contorno real (visível em `watershed_debug.png`: a região
+# saía como um bloco vertical de cantos retos, lida como "retângulo verde"
+# em vez de músculo). Aumentar COMPACTNESS ou mexer nas sementes de
+# vizinhos pra "empurrar" essa borda mudaria também chest/abdomen/hip
+# (proibido tocar). A solução foi contornar a olho, direto sobre
+# `corpohomem.png`, o polígono do oblíquo/serrátil visível (ponta entre
+# axila e peitoral, descendo ao longo da bainha do reto abdominal, fundo
+# arredondado acima do início do quadril) -- ver `POLIGONO_CINTURA_LADO`.
+# Esse polígono nunca é usado sozinho: é sempre recortado por
+# `corpo_mask` (silhueta) e por `_mascara_regioes_vizinhas_cintura`
+# (chest/abdomen/hip/right_arm/left_arm, lidos do MESMO `rotulos_ws` já
+# calculado) antes de virar a máscara final -- então mesmo que o polígono
+# avance por engano sobre território de outra região, o resultado nunca
+# invade uma máscara que já está correta (ver `main()`).
+#
+# Pontos (frações 0-1 de largura/altura) de UM lado -- o lado ESQUERDO da
+# IMAGEM (lado DIREITO da pessoa). O outro lado é o espelho (x -> 1-x), já
+# que a ilustração de frente é simétrica. Calibrado visualmente: se um dia
+# a imagem base for substituída, recalibre soltando um overlay desses
+# pontos sobre a nova imagem antes de confiar neles de novo.
+POLIGONO_CINTURA_LADO = [
+    (0.360, 0.278),  # ponta superior, entre a axila e o peitoral
+    (0.388, 0.283),
+    (0.415, 0.290),
+    (0.435, 0.298),
+    (0.443, 0.312),
+    (0.438, 0.330),
+    (0.428, 0.348),
+    (0.418, 0.365),
+    (0.408, 0.380),
+    (0.400, 0.383),  # início da curva do fundo (perto do abdômen)
+    (0.386, 0.386),
+    (0.372, 0.388),
+    (0.358, 0.387),
+    (0.345, 0.384),
+    (0.334, 0.380),  # fim da curva do fundo (perto do braço)
+    (0.330, 0.368),
+    (0.330, 0.345),
+    (0.334, 0.322),
+    (0.342, 0.300),
+    (0.352, 0.286),
+]
+
+# Regiões vizinhas que a máscara da cintura nunca pode invadir -- mesmo que
+# o polígono acima avance por cima delas, elas são subtraídas antes de
+# salvar (ver `main()`), então ficam bit-a-bit como já estavam.
+_VIZINHAS_CINTURA = ("chest", "abdomen", "hip", "right_arm", "left_arm")
+
+
+def mascara_poligono_cintura(h: int, w: int) -> np.ndarray:
+    """Rasteriza `POLIGONO_CINTURA_LADO` (e seu espelho) em uma máscara
+    booleana do tamanho da imagem -- ainda sem recorte pela silhueta nem
+    pelas regiões vizinhas, isso acontece em `main()`."""
+    mascara = np.zeros((h, w), dtype=bool)
+    for pontos in (POLIGONO_CINTURA_LADO, [(1 - x, y) for x, y in POLIGONO_CINTURA_LADO]):
+        ys = [y * h for _x, y in pontos]
+        xs = [x * w for x, _y in pontos]
+        rr, cc = draw_polygon(ys, xs, shape=(h, w))
+        mascara[rr, cc] = True
+    return mascara
+
+
 def calcular_silhueta(gray: np.ndarray) -> np.ndarray:
     h, w = gray.shape
     bg_candidato = gray < 100
@@ -332,7 +401,20 @@ def main() -> None:
         if nome.startswith("ignore"):
             continue
         idx = nome_para_id[nome]
-        binaria = rotulos_ws == idx
+        if nome == "waist":
+            # Ver o comentário grande junto de `POLIGONO_CINTURA_LADO`: a
+            # forma final da cintura não vem do watershed (`rotulos_ws ==
+            # idx`, usado por todas as outras regiões), e sim de um
+            # polígono calibrado à mão, recortado pela silhueta e pelas
+            # regiões vizinhas já decididas por ESTE MESMO `rotulos_ws`
+            # (não recalculadas -- só lidas, então chest/abdomen/hip/
+            # right_arm/left_arm saem bit-a-bit iguais ao que já eram).
+            vizinhas = np.zeros_like(corpo_mask)
+            for vizinha in _VIZINHAS_CINTURA:
+                vizinhas |= rotulos_ws == nome_para_id[vizinha]
+            binaria = mascara_poligono_cintura(h, w) & corpo_mask & ~vizinhas
+        else:
+            binaria = rotulos_ws == idx
         if nome in LIMITE_LATERAL:
             x0f, x1f = LIMITE_LATERAL[nome]
             binaria = binaria.copy()

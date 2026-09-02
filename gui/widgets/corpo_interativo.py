@@ -2,13 +2,15 @@
 
 Cada região destacável (ombro, tórax, braço...) é uma MÁSCARA precisa
 recortada da imagem original -- não um polígono/retângulo aproximado. As
-máscaras foram geradas offline por segmentação watershed sobre
-`corpohomem.png`, usando como divisores os próprios traços da ilustração
-(sulco deltopeitoral, sulcos do abdômen, prega inguinal, dobra do joelho...),
-e ficam em `assets/corpos/mascaras_masculino/<id_regiao>.png`: um PNG do
-mesmo tamanho da imagem base, transparente fora da região e com o contorno
+máscaras foram geradas offline por segmentação watershed sobre a imagem de
+cada modelo (`corpohomem.png` / `corpomulher.png`), usando como divisores os
+próprios traços da ilustração (sulco deltopeitoral, sulcos do abdômen, prega
+inguinal, dobra do joelho...), e ficam em
+`assets/corpos/mascaras_masculino|feminino/<id_regiao>.png`: um PNG do mesmo
+tamanho da imagem base, transparente fora da região e com o contorno
 anti-aliased exatamente sobre o músculo correspondente (ver
-`tools/gerar_mascaras_corpo.py` para regenerá-las caso a imagem base mude).
+`tools/gerar_mascaras_corpo.py` / `tools/gerar_mascaras_corpo_feminino.py`
+para regenerá-las caso a imagem base mude).
 
 Pintar o destaque é então só desenhar essa máscara (que já é verde, com
 alfa alto dentro do contorno) por cima da imagem base com opacidade reduzida
@@ -18,8 +20,10 @@ sem precisar remapear coordenada nenhuma. A imagem original nunca é
 alterada: o destaque é sempre uma camada por cima, então a musculatura,
 sombra e volume da ilustração continuam visíveis por baixo do verde.
 
-Cada modelo de corpo (masculino, futuramente feminino) tem sua própria
-pasta de máscaras, pois as proporções/pose de cada imagem são diferentes.
+Cada modelo de corpo (masculino, feminino) tem sua própria pasta de
+máscaras, pois as proporções/pose de cada imagem são diferentes -- os ids de
+região são os mesmos nos dois modelos (`IDS_REGIOES_MASCULINO` ==
+`IDS_REGIOES_FEMININO`), só a máscara por trás de cada id muda.
 """
 
 from pathlib import Path
@@ -41,9 +45,15 @@ _PASTA_ASSETS = Path(__file__).resolve().parent.parent.parent / "assets" / "corp
 CAMINHO_IMAGEM_MASCULINO = str(_PASTA_ASSETS / "corpohomem.png")
 PASTA_MASCARAS_MASCULINO = _PASTA_ASSETS / "mascaras_masculino"
 
-# ids das regiões com máscara gerada para o boneco masculino -- ver
-# gui/dialogs/cadastro_alunos.py (_REGIAO_POR_CHAVE) para o mapeamento entre
-# cada linha da tabela de medidas e o id de região correspondente aqui.
+CAMINHO_IMAGEM_FEMININO = str(_PASTA_ASSETS / "corpomulher.png")
+PASTA_MASCARAS_FEMININO = _PASTA_ASSETS / "mascaras_feminino"
+
+# ids das regiões com máscara gerada para cada boneco -- os dois modelos
+# (masculino e feminino) usam exatamente o mesmo conjunto de ids, só a
+# imagem/pasta de máscaras muda (ver `tools/gerar_mascaras_corpo.py` e
+# `tools/gerar_mascaras_corpo_feminino.py`). Ver gui/dialogs/cadastro_alunos.py
+# (_REGIAO_POR_CHAVE) para o mapeamento entre cada linha da tabela de
+# medidas e o id de região correspondente aqui.
 IDS_REGIOES_MASCULINO = (
     "shoulder",
     "chest",
@@ -59,6 +69,7 @@ IDS_REGIOES_MASCULINO = (
     "left_calf",
     "right_calf",
 )
+IDS_REGIOES_FEMININO = IDS_REGIOES_MASCULINO
 
 _OPACIDADE_SELECIONADO = 0.62
 _OPACIDADE_HOVER = 0.30

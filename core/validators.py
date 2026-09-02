@@ -49,6 +49,20 @@ def validar_treinou_antes(valor: Optional[str]) -> Optional[str]:
     return None
 
 
+def validar_tempo_treinamento(valor: str) -> Optional[str]:
+    """Etapa 2 (Anamnese): texto livre, mas obrigatório (espaços não contam)."""
+    if not (valor or "").strip():
+        return "Informe há quanto tempo treina."
+    return None
+
+
+def validar_tempo_sem_atividade(valor: str) -> Optional[str]:
+    """Etapa 2 (Anamnese): texto livre, mas obrigatório (espaços não contam)."""
+    if not (valor or "").strip():
+        return "Informe o tempo sem atividade física."
+    return None
+
+
 OBJETIVO_OPCOES = ("emagrecimento", "hipertrofia", "condicionamento", "reabilitacao", "outro")
 
 

@@ -12,7 +12,7 @@ vez que é exibida (usado pela etapa de Avaliação Física para escolher o
 boneco anatômico de acordo com o sexo já cadastrado).
 """
 
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from core.qt_core import (
     QByteArray,
@@ -20,7 +20,6 @@ from core.qt_core import (
     QColor,
     QComboBox,
     QDoubleValidator,
-    QFont,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -55,24 +54,45 @@ from core.validators import (
     validar_nome_completo,
     validar_objetivo_principal,
     validar_sexo,
+    validar_tempo_sem_atividade,
+    validar_tempo_treinamento,
     validar_tempo_treino_dia,
     validar_treinou_antes,
 )
 from gui.widgets.botao_principal import BotaoPrimario, BotaoSecundario
 from gui.widgets.corpo_interativo import (
+    CAMINHO_IMAGEM_FEMININO,
     CAMINHO_IMAGEM_MASCULINO,
+    IDS_REGIOES_FEMININO,
     IDS_REGIOES_MASCULINO,
+    PASTA_MASCARAS_FEMININO,
     PASTA_MASCARAS_MASCULINO,
     CorpoInterativoWidget,
 )
 
 
 class _CampoFormulario(QWidget):
-    """Agrupa label + campo + mensagem de erro, com estilo consistente."""
+    """Agrupa label + campo + mensagem de erro, com estilo consistente.
 
-    def __init__(self, label_texto: str, campo: QWidget, parent=None):
+    `tamanho_fonte_label`/`tamanho_fonte_campo` são opcionais — os padrões
+    reproduzem exatamente o tamanho já usado pelo resto do sistema, então
+    quem não os informa (Etapa 2 e Etapa 4, por exemplo) continua com a
+    aparência de sempre. Existem só para a Etapa 1 pedir textos um pouco
+    maiores sem duplicar toda esta classe.
+    """
+
+    def __init__(
+        self,
+        label_texto: str,
+        campo: QWidget,
+        parent=None,
+        *,
+        tamanho_fonte_label: int = Fontes.TAMANHO_LABEL,
+        tamanho_fonte_campo: int = 15,
+    ):
         super().__init__(parent)
         self.campo = campo
+        self._tamanho_fonte_campo = tamanho_fonte_campo
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -81,7 +101,7 @@ class _CampoFormulario(QWidget):
         label = QLabel(label_texto)
         label.setStyleSheet(
             f"background: transparent; border: none; "
-            f"color: {Cores.TEXTO_PRIMARIO}; font-size: {Fontes.TAMANHO_LABEL}px; font-weight: 600;"
+            f"color: {Cores.TEXTO_PRIMARIO}; font-size: {tamanho_fonte_label}px; font-weight: 600;"
         )
         layout.addWidget(label)
         layout.addWidget(campo)
@@ -114,7 +134,7 @@ class _CampoFormulario(QWidget):
                     border: 1px solid {cor_borda};
                     border-radius: 10px;
                     padding-left: 18px;
-                    font-size: 15px;
+                    font-size: {self._tamanho_fonte_campo}px;
                     color: {Cores.TEXTO_PRIMARIO};
                     min-height: 54px;
                 }}
@@ -135,7 +155,7 @@ class _CampoFormulario(QWidget):
                     border: 1px solid {cor_borda};
                     border-radius: 10px;
                     padding-left: 18px;
-                    font-size: 15px;
+                    font-size: {self._tamanho_fonte_campo}px;
                     color: {Cores.TEXTO_PRIMARIO};
                     min-height: 54px;
                 }}
@@ -217,15 +237,25 @@ class DadosAlunoStep(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
+        # Layout mais compacto que o padrão "20px entre tudo" das demais
+        # etapas: aqui cada vão é calibrado à mão (título colado na
+        # descrição, um respiro um pouco maior antes do cartão) em vez de um
+        # espaçamento uniforme — é o que dá a sensação de hierarquia sem
+        # sobrar vazio entre os blocos.
         layout_raiz = QVBoxLayout(self)
         layout_raiz.setContentsMargins(0, 0, 0, 0)
-        layout_raiz.setSpacing(20)
+        layout_raiz.setSpacing(0)
 
+        # Título com destaque maior que o resto do sistema (por isso o
+        # tamanho é literal aqui, e não Fontes.TAMANHO_TITULO — esse mesmo
+        # texto de estilo é reaproveitado pelo banner "Anamnese" das etapas
+        # 2 a 6, que não deve mudar de tamanho).
         titulo = QLabel("Dados do Aluno")
         titulo.setStyleSheet(
-            f"color: {Cores.TEXTO_PRIMARIO}; font-size: {Fontes.TAMANHO_TITULO}px; font-weight: 700;"
+            f"color: {Cores.TEXTO_PRIMARIO}; font-size: 30px; font-weight: 700;"
         )
         layout_raiz.addWidget(titulo)
+        layout_raiz.addSpacing(6)
 
         descricao = QLabel(
             "Inicie o cadastro preenchendo as informações básicas do novo aluno "
@@ -233,26 +263,41 @@ class DadosAlunoStep(QWidget):
         )
         descricao.setWordWrap(True)
         descricao.setStyleSheet(
-            f"color: {Cores.TEXTO_DESCRICAO}; font-size: 16px; font-weight: 600;"
+            f"color: {Cores.TEXTO_DESCRICAO}; font-size: 18px; font-weight: 600;"
         )
         layout_raiz.addWidget(descricao)
+        layout_raiz.addSpacing(16)
 
         cartao = _criar_cartao()
-        # Margem superior um pouco maior: dá mais respiro entre o topo do
-        # cartão e o início dos campos do formulário.
+        # Margens/spacing reduzidos (eram 28,32,28,28 com 24 entre campos):
+        # o card ainda "respira", só não sobra tanto vazio acima/abaixo dos
+        # três campos nem entre eles.
         layout_cartao = QVBoxLayout(cartao)
-        layout_cartao.setContentsMargins(28, 32, 28, 28)
-        layout_cartao.setSpacing(24)
+        layout_cartao.setContentsMargins(28, 20, 28, 20)
+        layout_cartao.setSpacing(16)
 
+        # tamanho_fonte_label/campo um pouco maiores que o padrão (13/15px)
+        # só nesta etapa — _CampoFormulario mantém os tamanhos originais
+        # para quem não passa esses argumentos (Etapa 2 e Etapa 4).
         self._campo_nome = QLineEdit()
         self._campo_nome.setPlaceholderText("Digite o nome completo do aluno")
-        self._grupo_nome = _CampoFormulario("Nome completo:", self._campo_nome)
+        self._grupo_nome = _CampoFormulario(
+            "Nome completo:",
+            self._campo_nome,
+            tamanho_fonte_label=15,
+            tamanho_fonte_campo=16,
+        )
         layout_cartao.addWidget(self._grupo_nome)
 
         self._campo_idade = QLineEdit()
         self._campo_idade.setPlaceholderText("Ex.: 25")
         self._campo_idade.setMaxLength(3)
-        self._grupo_idade = _CampoFormulario("Idade:", self._campo_idade)
+        self._grupo_idade = _CampoFormulario(
+            "Idade:",
+            self._campo_idade,
+            tamanho_fonte_label=15,
+            tamanho_fonte_campo=16,
+        )
         layout_cartao.addWidget(self._grupo_idade)
 
         self._campo_sexo = QComboBox()
@@ -268,7 +313,12 @@ class DadosAlunoStep(QWidget):
         paleta_popup.setColor(QPalette.Highlight, QColor(Cores.AZUL_PRIMARIO))
         paleta_popup.setColor(QPalette.HighlightedText, QColor("white"))
         self._campo_sexo.view().setPalette(paleta_popup)
-        self._grupo_sexo = _CampoFormulario("Sexo:", self._campo_sexo)
+        self._grupo_sexo = _CampoFormulario(
+            "Sexo:",
+            self._campo_sexo,
+            tamanho_fonte_label=15,
+            tamanho_fonte_campo=16,
+        )
         layout_cartao.addWidget(self._grupo_sexo)
 
         layout_raiz.addWidget(cartao)
@@ -494,6 +544,8 @@ class AnamneseStep(QWidget):
     def obter_dados_validados(self):
         """Valida a etapa; retorna um dict com os dados ou None se inválida."""
         self._label_erro_treinou.hide()
+        self._grupo_tempo_treinamento.limpar_erro()
+        self._grupo_tempo_parado.limpar_erro()
 
         if self._botao_sim.isChecked():
             treinou_antes = "Sim"
@@ -503,15 +555,41 @@ class AnamneseStep(QWidget):
             treinou_antes = None
 
         erro_treinou = validar_treinou_antes(treinou_antes)
+
+        tempo_treinamento = self._campo_tempo_treinamento.text().strip()
+        erro_tempo_treinamento = validar_tempo_treinamento(tempo_treinamento)
+
+        tempo_sem_atividade = self._campo_tempo_parado.text().strip()
+        erro_tempo_parado = validar_tempo_sem_atividade(tempo_sem_atividade)
+
+        # Verifica os três campos antes de decidir: assim todos os erros
+        # aparecem de uma vez, em vez de o usuário corrigir um e só então
+        # descobrir o próximo (mesmo padrão das demais etapas do wizard).
+        valido = True
+        primeiro_campo_invalido = None
         if erro_treinou:
             self._label_erro_treinou.setText(erro_treinou)
             self._label_erro_treinou.show()
+            valido = False
+            primeiro_campo_invalido = self._botao_sim
+        if erro_tempo_treinamento:
+            self._grupo_tempo_treinamento.mostrar_erro(erro_tempo_treinamento)
+            valido = False
+            primeiro_campo_invalido = primeiro_campo_invalido or self._campo_tempo_treinamento
+        if erro_tempo_parado:
+            self._grupo_tempo_parado.mostrar_erro(erro_tempo_parado)
+            valido = False
+            primeiro_campo_invalido = primeiro_campo_invalido or self._campo_tempo_parado
+
+        if not valido:
+            if primeiro_campo_invalido is not None:
+                primeiro_campo_invalido.setFocus()
             return None
 
         return {
             "treinou_antes": treinou_antes,
-            "tempo_treinamento": self._campo_tempo_treinamento.text().strip(),
-            "tempo_sem_atividade": self._campo_tempo_parado.text().strip(),
+            "tempo_treinamento": tempo_treinamento,
+            "tempo_sem_atividade": tempo_sem_atividade,
         }
 
     def limpar(self) -> None:
@@ -525,6 +603,8 @@ class AnamneseStep(QWidget):
         self._campo_tempo_treinamento.clear()
         self._campo_tempo_parado.clear()
         self._label_erro_treinou.hide()
+        self._grupo_tempo_treinamento.limpar_erro()
+        self._grupo_tempo_parado.limpar_erro()
 
 
 # -- Etapa 3: Objetivo principal ------------------------------------------
@@ -744,8 +824,9 @@ class ObjetivoPrincipalStep(QWidget):
         self._campo_outro = QTextEdit()
         self._campo_outro.setPlaceholderText("Descreva seu objetivo aqui...")
         self._campo_outro.setFixedHeight(90)
-        self._campo_outro.setStyleSheet(
-            f"""
+        # Guardados como atributos para poder alternar para a variante de
+        # erro (borda vermelha) e voltar, sem duplicar o QSS.
+        self._estilo_campo_outro_normal = f"""
             QTextEdit {{
                 background-color: {Cores.SUPERFICIE};
                 border: 1px solid {Cores.BORDA};
@@ -756,13 +837,35 @@ class ObjetivoPrincipalStep(QWidget):
             }}
             QTextEdit:focus {{ border: 1px solid {Cores.AZUL_PRIMARIO}; }}
             """
-        )
+        self._estilo_campo_outro_erro = f"""
+            QTextEdit {{
+                background-color: {Cores.SUPERFICIE};
+                border: 1px solid {Cores.ERRO};
+                border-radius: 10px;
+                padding: 12px 18px;
+                font-size: 15px;
+                color: {Cores.TEXTO_PRIMARIO};
+            }}
+            QTextEdit:focus {{ border: 1px solid {Cores.AZUL_PRIMARIO}; }}
+            """
+        self._campo_outro.setStyleSheet(self._estilo_campo_outro_normal)
         layout_bloco_outro.addWidget(self._campo_outro)
+
+        self._label_erro_outro = QLabel("")
+        self._label_erro_outro.setStyleSheet(
+            f"background: transparent; border: none; color: {Cores.ERRO}; font-size: 12px;"
+        )
+        self._label_erro_outro.hide()
+        layout_bloco_outro.addWidget(self._label_erro_outro)
 
         self._bloco_outro.hide()
         layout_cartao.addWidget(self._bloco_outro)
 
         self._botao_outro.toggled.connect(self._bloco_outro.setVisible)
+        # Desmarcar "Outro" (ou voltar a digitar) invalida o erro anterior —
+        # sem isto ele ficaria preso na tela mesmo depois de corrigido.
+        self._botao_outro.toggled.connect(lambda _: self._limpar_erro_outro())
+        self._campo_outro.textChanged.connect(self._limpar_erro_outro)
 
         self._label_erro_objetivo = QLabel("")
         self._label_erro_objetivo.setStyleSheet(
@@ -779,9 +882,14 @@ class ObjetivoPrincipalStep(QWidget):
         # sobra no fim, mantendo os dois do tamanho do próprio conteúdo.
         layout_raiz.addStretch(1)
 
+    def _limpar_erro_outro(self) -> None:
+        self._label_erro_outro.hide()
+        self._campo_outro.setStyleSheet(self._estilo_campo_outro_normal)
+
     def obter_dados_validados(self):
         """Valida a etapa; retorna um dict com os dados ou None se inválida."""
         self._label_erro_objetivo.hide()
+        self._limpar_erro_outro()
 
         objetivo = None
         for valor, botao in self._botoes_objetivo.items():
@@ -795,11 +903,15 @@ class ObjetivoPrincipalStep(QWidget):
             self._label_erro_objetivo.show()
             return None
 
-        objetivo_outro = (
-            self._campo_outro.toPlainText().strip()
-            if objetivo == _OBJETIVO_OUTRO_VALOR
-            else None
-        )
+        objetivo_outro = None
+        if objetivo == _OBJETIVO_OUTRO_VALOR:
+            objetivo_outro = self._campo_outro.toPlainText().strip()
+            if not objetivo_outro:
+                self._label_erro_outro.setText("Descreva seu objetivo.")
+                self._label_erro_outro.show()
+                self._campo_outro.setStyleSheet(self._estilo_campo_outro_erro)
+                self._campo_outro.setFocus()
+                return None
 
         return {
             "objetivo_principal": objetivo,
@@ -816,6 +928,7 @@ class ObjetivoPrincipalStep(QWidget):
         self._grupo_objetivo.setExclusive(True)
         self._campo_outro.clear()
         self._label_erro_objetivo.hide()
+        self._limpar_erro_outro()
 
 
 # -- Etapa 4: Frequência e tempo de treino --------------------------------
@@ -945,7 +1058,15 @@ class _PerguntaSaude(QWidget):
     def __init__(self, texto_pergunta: str, parent=None):
         super().__init__(parent)
 
-        layout = QHBoxLayout(self)
+        # QVBoxLayout raiz (linha de controles + label de erro abaixo, este
+        # oculto por padrão) em vez do QHBoxLayout único de antes: mesmo
+        # espaçamento/alinhamento da linha original, só ganhando espaço para
+        # a mensagem de erro sem interferir no layout das outras linhas.
+        layout_raiz = QVBoxLayout(self)
+        layout_raiz.setContentsMargins(0, 0, 0, 0)
+        layout_raiz.setSpacing(6)
+
+        layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(14)
 
@@ -971,8 +1092,9 @@ class _PerguntaSaude(QWidget):
 
         self._campo_qual = QLineEdit()
         self._campo_qual.setPlaceholderText("Qual?")
-        self._campo_qual.setStyleSheet(
-            f"""
+        # Guardados como atributos para alternar entre a borda normal e a de
+        # erro sem duplicar o QSS a cada troca de estado.
+        self._estilo_qual_normal = f"""
             QLineEdit {{
                 background-color: {Cores.SUPERFICIE};
                 border: 1px solid {Cores.BORDA};
@@ -984,11 +1106,68 @@ class _PerguntaSaude(QWidget):
             }}
             QLineEdit:focus {{ border: 1px solid {Cores.AZUL_PRIMARIO}; }}
             """
-        )
+        self._estilo_qual_erro = f"""
+            QLineEdit {{
+                background-color: {Cores.SUPERFICIE};
+                border: 1px solid {Cores.ERRO};
+                border-radius: 10px;
+                padding-left: 14px;
+                font-size: 15px;
+                color: {Cores.TEXTO_PRIMARIO};
+                min-height: 54px;
+            }}
+            QLineEdit:focus {{ border: 1px solid {Cores.AZUL_PRIMARIO}; }}
+            """
+        self._campo_qual.setStyleSheet(self._estilo_qual_normal)
         self._campo_qual.hide()
         layout.addWidget(self._campo_qual, stretch=1)
 
         self._botao_sim.toggled.connect(self._campo_qual.setVisible)
+        # Selecionar Sim/Não de novo ou corrigir o texto invalida o erro
+        # anterior — sem isto ele ficaria preso na tela mesmo já corrigido.
+        self._botao_sim.toggled.connect(lambda _: self.limpar_erro())
+        self._botao_nao.toggled.connect(lambda _: self.limpar_erro())
+        self._campo_qual.textChanged.connect(self.limpar_erro)
+
+        layout_raiz.addLayout(layout)
+
+        self._label_erro = QLabel("")
+        self._label_erro.setStyleSheet(
+            f"background: transparent; border: none; color: {Cores.ERRO}; font-size: 12px;"
+        )
+        self._label_erro.hide()
+        layout_raiz.addWidget(self._label_erro)
+
+    def validar(self) -> bool:
+        """Valida a linha; retorna True se ok, exibindo erro caso contrário."""
+        self.limpar_erro()
+        tem, qual = self.obter_resposta()
+
+        if tem not in ("Sim", "Não"):
+            self._mostrar_erro("Selecione uma opção.")
+            return False
+
+        if tem == "Sim" and not qual:
+            self._mostrar_erro("Preencha esse campo.")
+            self._campo_qual.setStyleSheet(self._estilo_qual_erro)
+            return False
+
+        return True
+
+    def _mostrar_erro(self, mensagem: str) -> None:
+        self._label_erro.setText(mensagem)
+        self._label_erro.show()
+
+    def limpar_erro(self) -> None:
+        self._label_erro.hide()
+        self._campo_qual.setStyleSheet(self._estilo_qual_normal)
+
+    def focar_invalido(self) -> None:
+        """Foca o primeiro controle inválido da linha (Sim/Não ou 'Qual?')."""
+        if self._botao_sim.isChecked() and not self._campo_qual.text().strip():
+            self._campo_qual.setFocus()
+        else:
+            self._botao_sim.setFocus()
 
     def obter_resposta(self):
         """Retorna (tem, qual): tem é 'Sim'/'Não'/None; qual só é preenchido se tem == 'Sim'."""
@@ -1011,6 +1190,7 @@ class _PerguntaSaude(QWidget):
         self._botao_nao.setChecked(False)
         self._grupo.setExclusive(True)
         self._campo_qual.clear()
+        self.limpar_erro()
 
 
 # (chave usada nos dados coletados, texto da pergunta) de cada linha da etapa
@@ -1075,7 +1255,19 @@ class HistoricoSaudeStep(QWidget):
         layout_raiz.addStretch(1)
 
     def obter_dados_validados(self):
-        """Sem campo obrigatório aqui: sempre retorna os dados coletados até agora."""
+        """Valida a etapa: cada pergunta exige Sim/Não e, se Sim, o campo 'Qual?'."""
+        primeira_invalida = None
+        valido = True
+        for pergunta in self._perguntas.values():
+            if not pergunta.validar():
+                valido = False
+                if primeira_invalida is None:
+                    primeira_invalida = pergunta
+
+        if not valido:
+            primeira_invalida.focar_invalido()
+            return None
+
         dados = {}
         for chave, pergunta in self._perguntas.items():
             tem, qual = pergunta.obter_resposta()
@@ -1155,27 +1347,52 @@ class _LinhaMedida(QWidget):
         layout.addStretch(1)
 
 
-def _rotulo_secao_medidas(texto: str) -> QLabel:
-    """Título de uma divisão da tabela (PARTE SUPERIOR / BRAÇOS / PARTE
-    INFERIOR) -- só um rótulo com mais destaque que os das medidas abaixo
-    dele, pra deixar a hierarquia das três divisões clara sem criar card,
-    botão ou container novo. `margin-top` (além do spacing já uniforme do
-    QVBoxLayout que empilha a coluna) é o que separa visualmente esta seção
-    das linhas da seção anterior; a borda inferior faz as vezes do "risco"
-    que normalmente marcaria o fim de um cabeçalho.
+def _cabecalho_bloco_medidas(texto: str) -> QFrame:
+    """Faixa azul escura de topo de um bloco de medidas (ex.: "Circunferência
+    Parte Superior (MASC)") -- mesmo tom do banner usado no topo da etapa,
+    mas arredondada só em cima para se fundir com o cartão que a envolve.
+    O texto fica à esquerda e centralizado verticalmente pelas margens
+    simétricas (12px em cima/embaixo) do layout de uma linha só.
     """
-    label = QLabel(texto.upper())
-    fonte = label.font()
-    fonte.setPointSize(fonte.pointSize() + 1)
-    fonte.setWeight(QFont.ExtraBold)
-    fonte.setLetterSpacing(QFont.PercentageSpacing, 106)
-    label.setFont(fonte)
-    label.setStyleSheet(
-        f"background: transparent; "
-        f"border: none; border-bottom: 2px solid {Cores.AZUL_PRIMARIO}; "
-        f"color: {Cores.AZUL_ESCURO}; padding-bottom: 5px; margin-top: 6px;"
+    cabecalho = QFrame()
+    cabecalho.setStyleSheet(
+        f"background-color: {Cores.AZUL_ESCURO}; border: none; "
+        f"border-top-left-radius: 14px; border-top-right-radius: 14px;"
     )
-    return label
+    layout = QVBoxLayout(cabecalho)
+    layout.setContentsMargins(20, 12, 20, 12)
+    titulo = QLabel(texto)
+    titulo.setStyleSheet(
+        f"background: transparent; border: none; color: white; "
+        f"font-size: {Fontes.TAMANHO_TEXTO}px; font-weight: 700;"
+    )
+    layout.addWidget(titulo)
+    return cabecalho
+
+
+def _criar_bloco_medidas(titulo: str) -> Tuple[QFrame, QVBoxLayout]:
+    """Card independente de um bloco de medidas (cabeçalho azul + linhas
+    abaixo) -- reaproveita o mesmo cartão branco/borda das demais etapas
+    para o corpo do bloco ficar visualmente ligado ao cabeçalho azul.
+    Devolve o frame (para empilhar na coluna da tabela) e o layout interno
+    onde cada `_LinhaMedida` do bloco deve ser adicionada.
+    """
+    bloco = _criar_cartao()
+    layout_bloco = QVBoxLayout(bloco)
+    layout_bloco.setContentsMargins(0, 0, 0, 0)
+    layout_bloco.setSpacing(0)
+    layout_bloco.addWidget(_cabecalho_bloco_medidas(titulo))
+
+    corpo = QWidget()
+    corpo.setStyleSheet("background: transparent;")
+    layout_linhas = QVBoxLayout(corpo)
+    layout_linhas.setContentsMargins(20, 16, 20, 16)
+    # Mesmo 16px de antes entre linhas -- só a divisão em blocos mudou, o
+    # espaçamento entre rótulo+campo de cada medida permanece igual.
+    layout_linhas.setSpacing(16)
+    layout_bloco.addWidget(corpo)
+
+    return bloco, layout_linhas
 
 
 def _texto_para_numero(texto: str) -> Optional[float]:
@@ -1230,6 +1447,20 @@ class AvaliacaoFisicaStep(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        # Vertical=Ignored (e não Preferred, o padrão) -- sem isto, o
+        # QStackedWidget do wizard (`CadastroAlunoWizard._stack`) nunca
+        # cresce além do sizeHint desta etapa, mesmo com os dois
+        # `addStretch(1)` do wizard tendo espaço sobrando numa janela
+        # grande: alguma combinação de layouts aninhados aqui dentro (o
+        # QScrollArea da tabela + o QStackedWidget interno do boneco) faz o
+        # cálculo de distribuição de espaço do Qt tratar o sizeHint desta
+        # etapa como fixo, ignorando o `stretch=1` que o wizard já passa
+        # pra ela -- Ignored faz o Qt desconsiderar esse sizeHint "preso" e
+        # deixar o stretch mandar de verdade. `minimumSizeHint` (o piso de
+        # ~400px comentado mais abaixo, no QScrollArea) continua valendo
+        # normalmente -- Ignored não remove esse piso, só o teto artificial.
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Ignored)
 
         layout_raiz = QVBoxLayout(self)
         layout_raiz.setContentsMargins(0, 0, 0, 0)
@@ -1290,27 +1521,40 @@ class AvaliacaoFisicaStep(QWidget):
         painel_tabela.setStyleSheet("background: transparent;")
         coluna_tabela = QVBoxLayout(painel_tabela)
         coluna_tabela.setContentsMargins(0, 0, 4, 0)
-        # 16 (e não os 10 originais) -- espaço ENTRE uma linha (rótulo +
-        # campo) e a próxima, não dentro de cada uma: com 18 linhas
-        # empilhadas, 10px deixava a coluna toda com aparência "amontoada".
-        # Não é padding do QLineEdit -- é o spacing deste QVBoxLayout, que
-        # empilha os `_LinhaMedida` (ver ali o spacing irmão, entre rótulo e
-        # campo dentro da mesma linha).
-        coluna_tabela.setSpacing(16)
+        # 28px aqui -- não é mais o espaço entre linhas (isso agora é o
+        # spacing de `layout_linhas` dentro de cada bloco, ver
+        # `_criar_bloco_medidas`), e sim o vão entre os dois cards
+        # (Parte Superior / Parte Inferior) empilhados nesta coluna: precisa
+        # ser nitidamente maior que o espaço entre linhas de um mesmo bloco
+        # para os dois cards lerem como blocos independentes, sem
+        # desperdiçar espaço.
+        coluna_tabela.setSpacing(28)
 
         self._campos: Dict[str, QLineEdit] = {}
 
-        def _adicionar_secao(titulo, linhas):
-            coluna_tabela.addWidget(_rotulo_secao_medidas(titulo))
+        def _preencher_bloco(layout_linhas, linhas):
             for chave, texto_label, _regiao in linhas:
                 linha = _LinhaMedida(texto_label)
                 linha.campo.textChanged.connect(self._recalcular_destaques)
                 self._campos[chave] = linha.campo
-                coluna_tabela.addWidget(linha)
+                layout_linhas.addWidget(linha)
 
-        _adicionar_secao("Parte superior", _LINHAS_PARTE_SUPERIOR)
-        _adicionar_secao("Braços", _LINHAS_BRACOS)
-        _adicionar_secao("Parte inferior", _LINHAS_PARTE_INFERIOR)
+        # Dois cards independentes (cabeçalho azul + linhas), em vez da
+        # antiga divisão em três rótulos dentro de uma tabela única --
+        # "Braços" passa a fazer parte do bloco superior, junto do resto das
+        # medidas de cima, igual à referência do personal.
+        bloco_superior, linhas_superior = _criar_bloco_medidas(
+            "Circunferência Parte Superior (MASC)"
+        )
+        _preencher_bloco(linhas_superior, _LINHAS_PARTE_SUPERIOR + _LINHAS_BRACOS)
+        coluna_tabela.addWidget(bloco_superior)
+
+        bloco_inferior, linhas_inferior = _criar_bloco_medidas(
+            "Circunferência Parte Inferior (MASC)"
+        )
+        _preencher_bloco(linhas_inferior, _LINHAS_PARTE_INFERIOR)
+        coluna_tabela.addWidget(bloco_inferior)
+
         coluna_tabela.addStretch(1)
 
         rolagem_tabela = QScrollArea()
@@ -1325,10 +1569,10 @@ class AvaliacaoFisicaStep(QWidget):
         )
         layout_cartao.addWidget(rolagem_tabela, stretch=3)
 
-        # Só existe asset do boneco masculino por enquanto; o feminino usa um
-        # placeholder até o asset correspondente ser fornecido (cada modelo
-        # precisa do seu próprio mapeamento de regiões — não dá pra "chutar"
-        # um agora). `ao_entrar` decide qual das duas páginas mostrar.
+        # Um boneco por sexo, cada um com sua própria imagem/pasta de
+        # máscaras (proporções diferentes — ver gui/widgets/corpo_interativo.py).
+        # `ao_entrar` escolhe qual página mostrar de acordo com o sexo já
+        # cadastrado na Etapa 1.
         self._pilha_corpo = QStackedWidget()
 
         self._corpo_masculino = CorpoInterativoWidget(
@@ -1337,7 +1581,16 @@ class AvaliacaoFisicaStep(QWidget):
         self._corpo_masculino.regiao_clicada.connect(self._focar_campo_da_regiao)
         self._pilha_corpo.addWidget(self._corpo_masculino)
 
-        self._placeholder_corpo = QLabel("Ilustração feminina\nem breve")
+        self._corpo_feminino = CorpoInterativoWidget(
+            CAMINHO_IMAGEM_FEMININO, PASTA_MASCARAS_FEMININO, IDS_REGIOES_FEMININO
+        )
+        self._corpo_feminino.regiao_clicada.connect(self._focar_campo_da_regiao)
+        self._pilha_corpo.addWidget(self._corpo_feminino)
+
+        # Sexo ainda não informado (ex.: etapa nunca visitada) cai aqui até
+        # `ao_entrar` decidir — mantém os dois bonecos como alternativa
+        # explícita em vez de um terceiro placeholder "sem sexo".
+        self._placeholder_corpo = QLabel("Selecione o sexo na\nEtapa 1 para ver o boneco")
         self._placeholder_corpo.setAlignment(Qt.AlignCenter)
         self._placeholder_corpo.setWordWrap(True)
         self._placeholder_corpo.setStyleSheet(
@@ -1364,9 +1617,13 @@ class AvaliacaoFisicaStep(QWidget):
         masculino não deve controlar o feminino nem vice-versa.
         """
         sexo = dados_coletados.get("sexo")
-        self._pilha_corpo.setCurrentWidget(
-            self._corpo_masculino if sexo == "Masculino" else self._placeholder_corpo
-        )
+        if sexo == "Masculino":
+            pagina = self._corpo_masculino
+        elif sexo == "Feminino":
+            pagina = self._corpo_feminino
+        else:
+            pagina = self._placeholder_corpo
+        self._pilha_corpo.setCurrentWidget(pagina)
 
     def _recalcular_destaques(self) -> None:
         regioes_ativas = {
@@ -1374,7 +1631,12 @@ class AvaliacaoFisicaStep(QWidget):
             for chave, campo in self._campos.items()
             if campo.text().strip()
         }
+        # Os dois bonecos usam os mesmos ids de região (ver
+        # IDS_REGIOES_MASCULINO/IDS_REGIOES_FEMININO) — atualizar os dois
+        # mantém o que não está visível em dia, então trocar de sexo em
+        # `ao_entrar` nunca mostra um boneco com destaques desatualizados.
         self._corpo_masculino.definir_regioes_selecionadas(regioes_ativas)
+        self._corpo_feminino.definir_regioes_selecionadas(regioes_ativas)
 
     def _focar_campo_da_regiao(self, regiao_id: str) -> None:
         """Interação inversa (item 14): clicar no boneco foca o primeiro
@@ -1420,10 +1682,25 @@ class CadastroAlunoWizard(QWidget):
         layout_raiz.setContentsMargins(40, 30, 40, 30)
         layout_raiz.setSpacing(20)
 
-        # Espaços elásticos iguais antes e depois do bloco de conteúdo
-        # centralizam esse bloco verticalmente entre a margem superior e os
-        # botões de navegação, em vez de deixar tudo colado no topo com uma
-        # grande área vazia embaixo.
+        # Espaços elásticos antes e depois do bloco de conteúdo centralizam
+        # esse bloco verticalmente entre a margem superior e os botões de
+        # navegação, em vez de deixar tudo colado no topo com uma grande
+        # área vazia embaixo -- mas com stretch bem menor que o do
+        # `self._stack` logo abaixo (12 contra 1 de cada um): numa janela
+        # grande, o QStackedWidget do wizard herda o tamanho mínimo da
+        # etapa MAIS "rígida" que ele guarda (a Anamnese, cujo formulário
+        # sem QScrollArea não encolhe) mesmo quando a etapa atual é outra
+        # -- com os três itens (espaçador, stack, espaçador) brigando pelo
+        # espaço sobrando em pé de igualdade (stretch=1 cada), esse piso
+        # praticamente sempre "ganhava" e a etapa atual (cabeçalho + card)
+        # ficava travada nesse tamanho mesmo em telas bem maiores, com o
+        # boneco/tabela da Etapa 6 sempre pequenos. Dar ao `_stack` a
+        # fatia MAIOR do espaço sobrando (em vez de 1/3 igual pra cada um
+        # dos três) é o que faz esse piso deixar de dominar cedo o
+        # bastante pra etapa atual (a que pede Expanding, ex.: Etapa 6)
+        # realmente crescer com a janela -- o preço é os espaçadores de
+        # centralização ficarem proporcionalmente menores nas etapas mais
+        # simples/curtas, mas ainda existem (não travam a 0).
         layout_raiz.addStretch(1)
 
         self._label_erro_geral = QLabel("")
@@ -1456,7 +1733,7 @@ class CadastroAlunoWizard(QWidget):
         self._stack = QStackedWidget()
         for etapa in self._etapas:
             self._stack.addWidget(etapa)
-        layout_raiz.addWidget(self._stack)
+        layout_raiz.addWidget(self._stack, stretch=12)
 
         layout_raiz.addStretch(1)
 
