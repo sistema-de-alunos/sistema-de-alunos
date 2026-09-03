@@ -12,6 +12,8 @@ vez que é exibida (usado pela etapa de Avaliação Física para escolher o
 boneco anatômico de acordo com o sexo já cadastrado).
 """
 
+import inspect
+from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 from core.qt_core import (
@@ -19,10 +21,13 @@ from core.qt_core import (
     QButtonGroup,
     QColor,
     QComboBox,
+    QDate,
+    QDateEdit,
     QDoubleValidator,
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QIcon,
     QLabel,
     QLineEdit,
@@ -32,11 +37,14 @@ from core.qt_core import (
     QEasingCurve,
     QPushButton,
     Qt,
+    QRegularExpression,
+    QRegularExpressionValidator,
     QScrollArea,
     QSize,
     QSizePolicy,
     QStackedWidget,
     QSvgRenderer,
+    QTableWidget,
     QTextEdit,
     QTimer,
     QVariantAnimation,
@@ -1347,12 +1355,14 @@ class _LinhaMedida(QWidget):
         layout.addStretch(1)
 
 
-def _cabecalho_bloco_medidas(texto: str) -> QFrame:
+def _cabecalho_bloco_medidas(texto: str, *, centralizado: bool = False) -> QFrame:
     """Faixa azul escura de topo de um bloco de medidas (ex.: "Circunferência
     Parte Superior (MASC)") -- mesmo tom do banner usado no topo da etapa,
     mas arredondada só em cima para se fundir com o cartão que a envolve.
-    O texto fica à esquerda e centralizado verticalmente pelas margens
-    simétricas (12px em cima/embaixo) do layout de uma linha só.
+    Por padrão o texto fica à esquerda e centralizado verticalmente pelas
+    margens simétricas (12px em cima/embaixo) do layout de uma linha só;
+    `centralizado=True` (usado pela Etapa 7) também centraliza o texto
+    horizontalmente, sem afetar quem já chama esta função sem o parâmetro.
     """
     cabecalho = QFrame()
     cabecalho.setStyleSheet(
@@ -1366,6 +1376,8 @@ def _cabecalho_bloco_medidas(texto: str) -> QFrame:
         f"background: transparent; border: none; color: white; "
         f"font-size: {Fontes.TAMANHO_TEXTO}px; font-weight: 700;"
     )
+    if centralizado:
+        titulo.setAlignment(Qt.AlignCenter)
     layout.addWidget(titulo)
     return cabecalho
 
@@ -1660,6 +1672,584 @@ class AvaliacaoFisicaStep(QWidget):
             campo.clear()
 
 
+# -- Etapa 7: Composição corporal -----------------------------------------
+
+# Caminho do arquivo já existente no projeto (raiz do repositório, ao lado de
+# main.py) -- reaproveitado como está, sem gerar/duplicar a imagem.
+_CAMINHO_IMAGEM_MUSCULO_GORDURA = str(
+    Path(__file__).resolve().parent.parent.parent / "musculogordura.png"
+)
+
+# Teto genérico para as dobras/circunferências (cm) -- mesmo limite já usado
+# pelo QDoubleValidator da Etapa 6 (_LinhaMedida), reaproveitado aqui para
+# manter o mesmo critério em ambas as etapas.
+_LIMITE_MEDIDA = 300.0
+_LIMITE_PERCENTUAL = 100.0
+
+# (chave, rótulo exibido na linha da tabela, tipo de célula, teto numérico).
+# tipo: "data" (QDateEdit dd/MM/aaaa) | "numero" (QLineEdit com validador,
+# aceita vírgula ou ponto) | "resultado" (QLabel calculado, somente leitura).
+# "datas" é sempre a primeira linha de cada tabela.
+_LINHAS_DOBRAS_CUTANEAS = [
+    ("datas", "Datas:", "data", None),
+    ("ombro", "Ombro", "numero", _LIMITE_MEDIDA),
+    ("torax", "Tórax", "numero", _LIMITE_MEDIDA),
+    ("cintura", "Cintura", "numero", _LIMITE_MEDIDA),
+    ("abdominal", "Abdominal", "numero", _LIMITE_MEDIDA),
+    ("quadril", "Quadril", "numero", _LIMITE_MEDIDA),
+    ("braco_e", "Braço (E)", "numero", _LIMITE_MEDIDA),
+    ("braco_e_contraido", "Braço (E) Contraído", "numero", _LIMITE_MEDIDA),
+    ("braco_d", "Braço (D)", "numero", _LIMITE_MEDIDA),
+    ("braco_d_contraido", "Braço (D) Contraído", "numero", _LIMITE_MEDIDA),
+]
+_LINHAS_PESO = [
+    ("peso", "Peso (kg)", "numero", _LIMITE_MEDIDA),
+]
+_LINHAS_COMPOSICAO_CORPORAL = [
+    ("datas", "Datas:", "data", None),
+    ("massa_magra", "Massa Magra (kg)", "resultado", None),
+    ("massa_gorda", "Massa Gorda (kg)", "resultado", None),
+    ("percentual_gordura", "% Gordura Corporal", "numero", _LIMITE_PERCENTUAL),
+]
+
+# Quatro colunas de reavaliação (o mesmo aluno preenchendo esta tabela ao
+# longo de várias sessões) -- número fixo de colunas, mas a largura de cada
+# uma é responsiva (QHeaderView.Stretch, ver `_criar_tabela_widgets`).
+_NUM_COLUNAS_REAVALIACAO = 4
+_ALTURA_LINHA_TABELA = 36
+# Largura fixa do cabeçalho vertical (coluna de rótulos) -- igual em todas as
+# tabelas desta etapa, para que as colunas de dados de todas elas (Dobras
+# Cutâneas, Peso, Composição corporal) fiquem alinhadas verticalmente.
+_LARGURA_ROTULO_TABELA = 190
+
+# Sentinela para "nenhuma data preenchida ainda" -- QDateEdit não tem um
+# estado nulo nativo, então usamos setSpecialValueText: sempre que a data do
+# campo é exatamente esta, o widget mostra um espaço em branco no lugar de
+# uma data real (ver `_criar_campo_data`).
+_DATA_SENTINELA = QDate(2000, 1, 1)
+
+_ESTILO_CAMPO_NUMERICO_NORMAL = f"""
+    QLineEdit {{
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        padding: 2px;
+        font-size: 13px;
+        font-weight: 600;
+        color: {Cores.TEXTO_PRIMARIO};
+    }}
+    QLineEdit:focus {{ background-color: {Cores.FUNDO}; border: 1px solid {Cores.AZUL_PRIMARIO}; }}
+"""
+_ESTILO_CAMPO_NUMERICO_ERRO = f"""
+    QLineEdit {{
+        background-color: {Cores.ERRO_FUNDO};
+        border: 1px solid {Cores.ERRO};
+        border-radius: 4px;
+        padding: 2px;
+        font-size: 13px;
+        font-weight: 600;
+        color: {Cores.TEXTO_PRIMARIO};
+    }}
+"""
+_ESTILO_CAMPO_DATA_NORMAL = f"""
+    QDateEdit {{
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        padding: 2px;
+        font-size: 13px;
+        font-weight: 600;
+        color: {Cores.TEXTO_PRIMARIO};
+    }}
+    QDateEdit:focus {{ background-color: {Cores.FUNDO}; border: 1px solid {Cores.AZUL_PRIMARIO}; }}
+    QDateEdit::drop-down {{ border: none; width: 18px; }}
+"""
+_ESTILO_CAMPO_DATA_ERRO = f"""
+    QDateEdit {{
+        background-color: {Cores.ERRO_FUNDO};
+        border: 1px solid {Cores.ERRO};
+        border-radius: 4px;
+        padding: 2px;
+        font-size: 13px;
+        font-weight: 600;
+        color: {Cores.TEXTO_PRIMARIO};
+    }}
+    QDateEdit::drop-down {{ border: none; width: 18px; }}
+"""
+
+
+def _marcar_campo_erro(campo: QWidget, com_erro: bool) -> None:
+    """Alterna a borda vermelha de erro num campo desta etapa (QLineEdit
+    numérico ou QDateEdit) -- mesma ideia de `_CampoFormulario._marcar_campo`
+    usada nas demais etapas, só que os campos aqui vivem dentro de células de
+    tabela em vez de um `_CampoFormulario` próprio.
+    """
+    if isinstance(campo, QDateEdit):
+        campo.setStyleSheet(_ESTILO_CAMPO_DATA_ERRO if com_erro else _ESTILO_CAMPO_DATA_NORMAL)
+    else:
+        campo.setStyleSheet(_ESTILO_CAMPO_NUMERICO_ERRO if com_erro else _ESTILO_CAMPO_NUMERICO_NORMAL)
+
+
+def _criar_validador_numerico(maximo: float, casas_decimais: int = 1) -> QRegularExpressionValidator:
+    """Só deixa passar dígitos e, opcionalmente, UMA casa decimal separada
+    por vírgula OU ponto -- letra nenhuma chega a ser digitada (a tecla é
+    simplesmente ignorada). A conversão pra número (`_texto_para_numero`, já
+    usada pela Etapa 6) normaliza os dois separadores para o mesmo padrão
+    antes de qualquer cálculo, então "10,5" e "10.5" viram o mesmo valor.
+    """
+    digitos_inteiros = len(str(int(maximo)))
+    padrao = QRegularExpression(
+        rf"^\d{{0,{digitos_inteiros}}}([.,]\d{{0,{casas_decimais}}})?$"
+    )
+    return QRegularExpressionValidator(padrao)
+
+
+def _criar_campo_numerico(maximo: float, *, casas_decimais: int = 1) -> QLineEdit:
+    campo = QLineEdit()
+    campo.setAlignment(Qt.AlignCenter)
+    campo.setFrame(False)
+    campo.setValidator(_criar_validador_numerico(maximo, casas_decimais))
+    # Sem placeholder "0,0": numa tabela de 4 colunas quase sempre vazias,
+    # um texto de exemplo em todas as células vira ruído visual e pode ser
+    # lido de relance como "zero já preenchido" -- a própria célula em
+    # branco (com a borda da tabela) já deixa claro que está vazia.
+    _marcar_campo_erro(campo, com_erro=False)
+    return campo
+
+
+def _criar_campo_data() -> QDateEdit:
+    campo = QDateEdit()
+    campo.setDisplayFormat("dd/MM/yyyy")
+    campo.setCalendarPopup(True)
+    campo.setAlignment(Qt.AlignCenter)
+    campo.setMinimumDate(_DATA_SENTINELA)
+    # Texto mostrado quando a data ainda é a sentinela -- ou seja, campo
+    # "vazio" pro usuário, mesmo o QDateEdit sempre guardando uma QDate real.
+    campo.setSpecialValueText(" ")
+    campo.setDate(_DATA_SENTINELA)
+    _marcar_campo_erro(campo, com_erro=False)
+    return campo
+
+
+def _criar_label_resultado() -> QLabel:
+    label = QLabel("—")
+    label.setAlignment(Qt.AlignCenter)
+    label.setStyleSheet(
+        f"background: transparent; border: none; color: {Cores.TEXTO_PRIMARIO}; "
+        f"font-size: 13px; font-weight: 700;"
+    )
+    return label
+
+
+def _criar_tabela_widgets(especificacoes, num_colunas: int = _NUM_COLUNAS_REAVALIACAO):
+    """Tabela real (QTableWidget) cujas células são widgets de verdade --
+    `QDateEdit`, `QLineEdit` validado ou `QLabel` calculado -- via
+    `setCellWidget`, em vez de texto solto: é isso que impede digitar letra
+    num campo numérico e mostra a data já formatada como dd/mm/aaaa. Devolve
+    (tabela, matriz), onde `matriz[chave]` é a lista de widgets daquela
+    linha, um por coluna, na mesma ordem de `especificacoes`.
+    """
+    rotulos = [rotulo for _chave, rotulo, _tipo, _maximo in especificacoes]
+    tabela = QTableWidget(len(especificacoes), num_colunas)
+    tabela.setVerticalHeaderLabels(rotulos)
+    tabela.horizontalHeader().hide()
+    tabela.verticalHeader().setFixedWidth(_LARGURA_ROTULO_TABELA)
+    tabela.verticalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+    tabela.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+    tabela.verticalHeader().setDefaultSectionSize(_ALTURA_LINHA_TABELA)
+    tabela.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+    tabela.horizontalHeader().setMinimumSectionSize(90)
+    # A edição acontece sempre através do próprio widget da célula (o
+    # QLineEdit/QDateEdit já é interativo) -- não faz sentido o
+    # QTableWidget também tentar abrir seu próprio editor por cima.
+    tabela.setSelectionMode(QTableWidget.NoSelection)
+    tabela.setEditTriggers(QTableWidget.NoEditTriggers)
+    tabela.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    tabela.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    tabela.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    tabela.setStyleSheet(
+        f"""
+        QTableWidget {{
+            background-color: {Cores.SUPERFICIE};
+            gridline-color: {Cores.BORDA};
+            border: 1px solid {Cores.BORDA};
+        }}
+        QHeaderView::section {{
+            background-color: {Cores.FUNDO};
+            color: {Cores.TEXTO_PRIMARIO};
+            font-weight: 600;
+            font-size: 12px;
+            padding: 0 10px;
+            border: none;
+            border-right: 1px solid {Cores.BORDA};
+            border-bottom: 1px solid {Cores.BORDA};
+        }}
+        """
+    )
+
+    matriz: Dict[str, list] = {}
+    for linha, (chave, _rotulo, tipo, maximo) in enumerate(especificacoes):
+        widgets_linha = []
+        for coluna in range(num_colunas):
+            if tipo == "data":
+                widget = _criar_campo_data()
+            elif tipo == "resultado":
+                widget = _criar_label_resultado()
+            else:
+                widget = _criar_campo_numerico(maximo)
+            tabela.setCellWidget(linha, coluna, widget)
+            widgets_linha.append(widget)
+        matriz[chave] = widgets_linha
+
+    # Sem QScrollArea própria (a coluna inteira já rola, ver
+    # ComposicaoCorporalStep) -- a tabela deve ter exatamente a altura do
+    # seu conteúdo, nunca mais nem menos.
+    tabela.setFixedHeight(tabela.verticalHeader().length() + 2 * tabela.frameWidth() + 2)
+    return tabela, matriz
+
+
+def _valor_data(campo: QDateEdit) -> Optional[str]:
+    """dd/MM/aaaa se preenchido (diferente da sentinela), None se vazio."""
+    if campo.date() == _DATA_SENTINELA:
+        return None
+    return campo.date().toString("dd/MM/yyyy")
+
+
+def _formatar_numero(valor: float, casas: int = 1) -> str:
+    """Mesmo padrão vírgula da interface (ver `_criar_validador_numerico`)."""
+    return f"{valor:.{casas}f}".replace(".", ",")
+
+
+def _limpar_widget(widget: QWidget) -> None:
+    """Restaura um widget de célula (data/número/resultado) ao estado vazio,
+    de acordo com seu tipo -- usado por `ComposicaoCorporalStep.limpar()`.
+    """
+    if isinstance(widget, QDateEdit):
+        widget.setDate(_DATA_SENTINELA)
+    elif isinstance(widget, QLabel):
+        widget.setText("—")
+        widget.setToolTip("")
+    else:
+        widget.clear()
+
+
+def _criar_card_tabela(titulo: str, *widgets: QWidget) -> QFrame:
+    """Cartão com faixa azul (título centralizado) + conteúdo empilhado --
+    mesmo padrão visual de `_criar_bloco_medidas`, adaptado para empacotar
+    as tabelas desta etapa em vez de linhas de medida avulsas.
+    """
+    cartao = _criar_cartao()
+    layout = QVBoxLayout(cartao)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(0)
+    layout.addWidget(_cabecalho_bloco_medidas(titulo, centralizado=True))
+
+    corpo = QWidget()
+    corpo.setStyleSheet("background: transparent;")
+    layout_corpo = QVBoxLayout(corpo)
+    layout_corpo.setContentsMargins(20, 16, 20, 16)
+    layout_corpo.setSpacing(14)
+    for widget in widgets:
+        layout_corpo.addWidget(widget)
+    layout.addWidget(corpo)
+
+    return cartao
+
+
+class _ImagemProporcional(QLabel):
+    """QLabel cujo pixmap acompanha o redimensionamento do widget mantendo
+    a proporção original -- usada para `musculogordura.png` ao lado da
+    tabela, sem esticar a imagem horizontal/verticalmente de forma
+    independente (mesma ideia de `_retangulo_imagem` em corpo_interativo.py,
+    só que via QLabel/QPixmap.scaled em vez de paintEvent manual).
+    """
+
+    def __init__(self, caminho_imagem: str, parent=None):
+        super().__init__(parent)
+        self._pixmap_original = QPixmap(caminho_imagem)
+        self.setAlignment(Qt.AlignCenter)
+        self.setMinimumSize(80, 80)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._atualizar_pixmap()
+
+    def resizeEvent(self, evento) -> None:
+        super().resizeEvent(evento)
+        self._atualizar_pixmap()
+
+    def _atualizar_pixmap(self) -> None:
+        if self._pixmap_original.isNull():
+            return
+        self.setPixmap(
+            self._pixmap_original.scaled(
+                self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+        )
+
+
+class ComposicaoCorporalStep(QWidget):
+    """Etapa 7 do cadastro: dobras cutâneas, peso e composição corporal.
+
+    Vem logo depois da Avaliação Física (Etapa 6), igual para os dois sexos
+    -- a imagem músculo x gordura é a mesma nos dois casos, então esta etapa
+    não precisa de `ao_entrar` para reagir ao sexo do aluno (diferente da
+    Etapa 6, que troca de boneco anatômico).
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        # Mesmo ajuste da Etapa 6 (ver comentário lá): sem isto o
+        # QStackedWidget do wizard trava a altura desta etapa no sizeHint,
+        # ignorando o stretch que o wizard já reserva para o conteúdo.
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Ignored)
+
+        layout_raiz = QVBoxLayout(self)
+        layout_raiz.setContentsMargins(0, 0, 0, 0)
+        layout_raiz.setSpacing(18)
+
+        # Cabeçalho -- mesmo banner azul das demais etapas da anamnese.
+        cabecalho = QFrame()
+        cabecalho.setStyleSheet(
+            f"background-color: {Cores.AZUL_ESCURO}; border-radius: 14px;"
+        )
+        layout_cabecalho = QVBoxLayout(cabecalho)
+        layout_cabecalho.setContentsMargins(28, 20, 28, 20)
+        layout_cabecalho.setSpacing(4)
+
+        titulo_cabecalho = QLabel("Anamnese")
+        titulo_cabecalho.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: white; font-size: {Fontes.TAMANHO_TITULO}px; font-weight: 700;"
+        )
+        layout_cabecalho.addWidget(titulo_cabecalho)
+
+        subtitulo_cabecalho = QLabel("Etapa 7: Composição corporal")
+        subtitulo_cabecalho.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: white; font-size: {Fontes.TAMANHO_TEXTO}px; font-weight: 500;"
+        )
+        layout_cabecalho.addWidget(subtitulo_cabecalho)
+
+        layout_raiz.addWidget(cabecalho)
+
+        # Card com tabelas (esquerda) + imagem músculo x gordura (direita) --
+        # mesma divisão em duas colunas da Etapa 6 (tabela + boneco).
+        cartao = _criar_cartao()
+        cartao.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        layout_cartao = QHBoxLayout(cartao)
+        layout_cartao.setContentsMargins(28, 24, 28, 24)
+        layout_cartao.setSpacing(24)
+
+        painel_esquerdo = QWidget()
+        painel_esquerdo.setStyleSheet("background: transparent;")
+        coluna_esquerda = QVBoxLayout(painel_esquerdo)
+        coluna_esquerda.setContentsMargins(0, 0, 4, 0)
+        # 28px entre os dois cards (Dobras Cutâneas / Composição corporal) --
+        # nitidamente maior que o spacing interno de cada card (14px), para
+        # lerem como blocos independentes dentro da mesma seção.
+        coluna_esquerda.setSpacing(28)
+
+        # Mensagem de validação ao avançar (ver `obter_dados_validados`) --
+        # mesmo estilo do banner de erro geral do wizard, só que local a esta
+        # etapa; hide() não reserva espaço, então não aparece vazio normalmente.
+        self._label_erro = QLabel("")
+        self._label_erro.setWordWrap(True)
+        self._label_erro.setStyleSheet(
+            f"""
+            background-color: {Cores.ERRO_FUNDO};
+            color: {Cores.ERRO};
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: {Fontes.TAMANHO_LABEL}px;
+            """
+        )
+        self._label_erro.hide()
+        coluna_esquerda.addWidget(self._label_erro)
+
+        self._tabela_dobras, self._campos_dobras = _criar_tabela_widgets(_LINHAS_DOBRAS_CUTANEAS)
+        # Peso fica numa tabela própria (linha separada da lista de dobras),
+        # mas com a mesma largura de rótulo -- as colunas de dados de ambas
+        # ficam alinhadas mesmo sendo dois QTableWidget diferentes.
+        self._tabela_peso, self._campos_peso = _criar_tabela_widgets(_LINHAS_PESO)
+
+        divisor_peso = QFrame()
+        divisor_peso.setFixedHeight(1)
+        divisor_peso.setStyleSheet(f"background-color: {Cores.BORDA};")
+
+        bloco_dobras = _criar_card_tabela(
+            "Dobras Cutâneas", self._tabela_dobras, divisor_peso, self._tabela_peso
+        )
+        coluna_esquerda.addWidget(bloco_dobras)
+
+        self._tabela_composicao, self._campos_composicao = _criar_tabela_widgets(
+            _LINHAS_COMPOSICAO_CORPORAL
+        )
+        bloco_composicao = _criar_card_tabela("Composição corporal", self._tabela_composicao)
+        coluna_esquerda.addWidget(bloco_composicao)
+
+        coluna_esquerda.addStretch(1)
+
+        # Massa Gorda/Magra são sempre recalculadas a partir do Peso e do %
+        # Gordura Corporal da MESMA coluna (mesma reavaliação) -- qualquer
+        # mudança num dos dois já atualiza o resultado na hora, sem precisar
+        # de um botão "calcular" separado.
+        for campo_peso in self._campos_peso["peso"]:
+            campo_peso.textChanged.connect(self._recalcular_composicao)
+        for campo_percentual in self._campos_composicao["percentual_gordura"]:
+            campo_percentual.textChanged.connect(self._recalcular_composicao)
+
+        # Campo obrigatório (ver `obter_dados_validados`): corrigir o valor
+        # já limpa o erro daquele campo específico e esconde a mensagem
+        # geral, em vez de deixá-la presa na tela mesmo após corrigido.
+        self._campos_peso["peso"][0].textChanged.connect(self._limpar_erro_validacao)
+        self._campos_dobras["datas"][0].dateChanged.connect(self._limpar_erro_validacao)
+
+        self._recalcular_composicao()
+
+        # QScrollArea (mesmo motivo da Etapa 6): numa janela pequena, as duas
+        # tabelas empilhadas podem exceder a altura disponível -- rolar o
+        # excesso evita que a coluna fique espremida ou corte conteúdo.
+        rolagem_esquerda = QScrollArea()
+        rolagem_esquerda.setWidget(painel_esquerdo)
+        rolagem_esquerda.setWidgetResizable(True)
+        rolagem_esquerda.setFrameShape(QFrame.NoFrame)
+        rolagem_esquerda.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        rolagem_esquerda.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        rolagem_esquerda.setStyleSheet(
+            "QScrollArea { background: transparent; border: none; } "
+            "QScrollArea > QWidget > QWidget { background: transparent; }"
+        )
+        layout_cartao.addWidget(rolagem_esquerda, stretch=3)
+
+        # A imagem preenche a altura toda do cartão (QSizePolicy.Expanding);
+        # como o pixmap é sempre reescalado centralizado dentro desse
+        # espaço, ela fica alinhada ao centro vertical da coluna da tabela.
+        self._imagem_musculo_gordura = _ImagemProporcional(_CAMINHO_IMAGEM_MUSCULO_GORDURA)
+        layout_cartao.addWidget(self._imagem_musculo_gordura, stretch=2)
+
+        layout_raiz.addWidget(cartao, stretch=1)
+
+    # -- Composição corporal: cálculo automático -------------------------
+    #
+    # O projeto não tem (nem documenta) nenhum protocolo de dobras cutâneas
+    # para estimar o % de gordura corporal a partir das medidas de dobras
+    # (procurado em todo o código-fonte -- ver mensagem de commit da tarefa
+    # para os termos buscados). Os rótulos usados aqui (Ombro, Tórax,
+    # Cintura, Abdominal, Quadril, Braço) também não correspondem aos
+    # pontos-padrão de nenhum protocolo conhecido (Pollock, Guedes,
+    # Faulkner...), que usam locais como tríceps/subescapular/supra-ilíaca/
+    # coxa -- então não há como mapear essas dobras para uma fórmula
+    # existente sem inventar uma. Por isso "% Gordura Corporal" continua um
+    # campo digitado pelo personal (validado como número), e só o que a
+    # tarefa define explicitamente -- Massa Gorda/Magra a partir de Peso e
+    # % Gordura -- é calculado automaticamente abaixo.
+    def _recalcular_composicao(self) -> None:
+        campos_peso = self._campos_peso["peso"]
+        campos_percentual = self._campos_composicao["percentual_gordura"]
+        labels_gorda = self._campos_composicao["massa_gorda"]
+        labels_magra = self._campos_composicao["massa_magra"]
+
+        for coluna in range(_NUM_COLUNAS_REAVALIACAO):
+            peso = _texto_para_numero(campos_peso[coluna].text())
+            percentual = _texto_para_numero(campos_percentual[coluna].text())
+
+            if peso is None or percentual is None:
+                # Nunca "0 kg"/"0%" inventado -- só o traço indicando que
+                # ainda faltam dados para calcular (ver dica no tooltip).
+                labels_gorda[coluna].setText("—")
+                labels_magra[coluna].setText("—")
+                dica = "Preencha o peso e o % de gordura corporal para calcular."
+                labels_gorda[coluna].setToolTip(dica)
+                labels_magra[coluna].setToolTip(dica)
+                continue
+
+            massa_gorda = peso * (percentual / 100)
+            massa_magra = peso - massa_gorda
+            labels_gorda[coluna].setText(f"{_formatar_numero(massa_gorda)} kg")
+            labels_magra[coluna].setText(f"{_formatar_numero(massa_magra)} kg")
+            labels_gorda[coluna].setToolTip("")
+            labels_magra[coluna].setToolTip("")
+
+    # -- Validação ao avançar ---------------------------------------------
+
+    def _limpar_erro_validacao(self) -> None:
+        self._label_erro.hide()
+        _marcar_campo_erro(self._campos_dobras["datas"][0], com_erro=False)
+        _marcar_campo_erro(self._campos_peso["peso"][0], com_erro=False)
+
+    def _mostrar_erro_validacao(self, mensagem: str, campo: QWidget) -> None:
+        self._label_erro.setText(mensagem)
+        self._label_erro.show()
+        _marcar_campo_erro(campo, com_erro=True)
+        campo.setFocus()
+
+    def obter_dados_validados(self):
+        """Exige data e peso da primeira reavaliação (coluna 0) -- sem eles
+        não há um registro de composição corporal utilizável. As demais
+        dobras, o % de gordura e as colunas de reavaliações futuras
+        continuam opcionais (mesmo espírito "sem preenchimento obrigatório"
+        da Etapa 6): o personal pode completá-las ao longo do
+        acompanhamento, em visitas seguintes.
+        """
+        self._limpar_erro_validacao()
+
+        campo_data = self._campos_dobras["datas"][0]
+        if campo_data.date() == _DATA_SENTINELA:
+            self._mostrar_erro_validacao("Informe uma data válida.", campo_data)
+            return None
+
+        campo_peso = self._campos_peso["peso"][0]
+        if _texto_para_numero(campo_peso.text()) is None:
+            self._mostrar_erro_validacao("Preencha o campo Peso.", campo_peso)
+            return None
+
+        def extrair_numeros(matriz, chave):
+            return [_texto_para_numero(w.text()) for w in matriz[chave]]
+
+        def extrair_datas(matriz):
+            return [_valor_data(w) for w in matriz["datas"]]
+
+        dobras_cutaneas = {"datas": extrair_datas(self._campos_dobras)}
+        for chave, _rotulo, tipo, _maximo in _LINHAS_DOBRAS_CUTANEAS:
+            if tipo == "numero":
+                dobras_cutaneas[chave] = extrair_numeros(self._campos_dobras, chave)
+
+        peso = extrair_numeros(self._campos_peso, "peso")
+        percentual_gordura = extrair_numeros(self._campos_composicao, "percentual_gordura")
+
+        massa_gorda = []
+        massa_magra = []
+        for coluna in range(_NUM_COLUNAS_REAVALIACAO):
+            p, pct = peso[coluna], percentual_gordura[coluna]
+            if p is None or pct is None:
+                massa_gorda.append(None)
+                massa_magra.append(None)
+            else:
+                gorda = round(p * (pct / 100), 1)
+                massa_gorda.append(gorda)
+                massa_magra.append(round(p - gorda, 1))
+
+        composicao_corporal = {
+            "datas": extrair_datas(self._campos_composicao),
+            "massa_magra": massa_magra,
+            "massa_gorda": massa_gorda,
+            "percentual_gordura": percentual_gordura,
+        }
+
+        return {
+            "dobras_cutaneas": dobras_cutaneas,
+            "peso": peso,
+            "composicao_corporal": composicao_corporal,
+        }
+
+    def limpar(self) -> None:
+        for matriz in (self._campos_dobras, self._campos_peso, self._campos_composicao):
+            for widgets in matriz.values():
+                for widget in widgets:
+                    _limpar_widget(widget)
+        self._limpar_erro_validacao()
+
+
 class CadastroAlunoWizard(QWidget):
     """Container que controla a navegação entre as etapas do cadastro."""
 
@@ -1728,6 +2318,7 @@ class CadastroAlunoWizard(QWidget):
             FrequenciaTreinoStep(),
             HistoricoSaudeStep(),
             AvaliacaoFisicaStep(),
+            ComposicaoCorporalStep(),
         ]
 
         self._stack = QStackedWidget()
@@ -1804,8 +2395,20 @@ class CadastroAlunoWizard(QWidget):
             ao_entrar(self._dados_coletados)
 
     def _salvar_aluno(self) -> None:
+        # Filtra para os parâmetros que `criar_aluno` de fato aceita: etapas
+        # mais novas (ex.: Composição Corporal) podem coletar dados que
+        # ainda não têm coluna própria no cadastro do aluno -- eles
+        # continuam disponíveis em `self._dados_coletados` durante a sessão
+        # do wizard (nada se perde ao navegar entre etapas), só não são
+        # enviados a um parâmetro que `criar_aluno` não reconhece.
+        parametros_aceitos = set(inspect.signature(self._aluno_service.criar_aluno).parameters)
+        dados_para_salvar = {
+            chave: valor
+            for chave, valor in self._dados_coletados.items()
+            if chave in parametros_aceitos
+        }
         try:
-            self._aluno_service.criar_aluno(**self._dados_coletados)
+            self._aluno_service.criar_aluno(**dados_para_salvar)
         except Exception:
             self._label_erro_geral.setText(
                 "Não foi possível salvar o aluno agora. Tente novamente."

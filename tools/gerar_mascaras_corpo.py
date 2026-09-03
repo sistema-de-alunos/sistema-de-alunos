@@ -186,8 +186,20 @@ ZONAS_EXCLUSAO_FECHAMENTO = [
 # compartilhada nem nas sementes de nenhuma outra região.
 LIMITE_LATERAL = {
     "hip": (0.39, 0.61),
-    "right_thigh": (0.0, 0.50),
-    "left_thigh": (0.50, 1.0),
+    # 0.50 (a linha média exata) cortava coxa de verdade: as duas coxas se
+    # tocam na face interna (adutores) entre ~0.50 e 0.53 nessa faixa de
+    # altura -- confirmado lendo os pixels ali (tom de músculo, não fundo) e
+    # comparando com o próprio limite bruto do watershed do lado esquerdo
+    # ("left_thigh" começa em ~0.52-0.53 na mesma altura, nunca abaixo
+    # disso), então 0.50 sobrava sem necessidade. Novo limite (0.54) fica
+    # ainda acima do máximo bruto observado (~0.537, em y=0.564) -- cobre a
+    # coxa inteira sem reabrir a solda silhueta-com-a-outra-perna que esse
+    # limite existe pra evitar.
+    "right_thigh": (0.0, 0.54),
+    # Espelho do ajuste acima: bruto chega a x=0.522 (também músculo de
+    # verdade, checado nos pixels) antes de "left_thigh" ceder pra
+    # "right_thigh"; 0.50 cortava esse tanto da face interna.
+    "left_thigh": (0.46, 1.0),
     "right_calf": (0.0, 0.44),
     "left_calf": (0.56, 1.0),
 }
@@ -227,6 +239,25 @@ LIMITE_SUPERIOR = {
     "right_forearm": 0.350,
     "right_thigh": 0.501,
     "left_thigh": 0.532,
+}
+
+# Trava vertical (fração y máxima) para "left_forearm": dentro de
+# ZONAS_EXCLUSAO_FECHAMENTO (mesma zona usada pra restaurar o vão real entre
+# mão e quadril -- ver `calcular_silhueta`), a face medial do antebraço, em
+# sombra, tem tom parecido com o fundo; sem o fechamento ali (é essa zona que
+# desliga o fechamento), o flood fill cru classifica parte da própria pele
+# do antebraço como fundo. O watershed, restrito a essa silhueta com esse
+# buraco, então lê a região como "aberta" logo abaixo do punho de verdade e
+# deixa "left_forearm" vazar por ela pra dentro da mão -- confirmado lendo o
+# perfil de largura por linha da máscara bruta: depois de afunilar até
+# 4-18px (o punho de verdade, ~0.445-0.475), a largura salta de volta pra
+# 54px em 0.480 e 141px em 0.500 (já indo parar sobre a mão/o vão do
+# quadril, não mais sobre o antebraço). Trava calibrada logo após o afunilar
+# do punho, antes desse salto. "right_forearm" não precisa disso -- a trava
+# de cima (LIMITE_SUPERIOR) já resolve o vazamento do lado direito, que é
+# pra cima (cotovelo) em vez de pra baixo (mão).
+LIMITE_INFERIOR = {
+    "left_forearm": 0.478,
 }
 
 
@@ -423,6 +454,9 @@ def main() -> None:
         if nome in LIMITE_SUPERIOR:
             binaria = binaria.copy()
             binaria[: int(LIMITE_SUPERIOR[nome] * h), :] = False
+        if nome in LIMITE_INFERIOR:
+            binaria = binaria.copy()
+            binaria[int(LIMITE_INFERIOR[nome] * h) :, :] = False
         salvar_mascara(
             PASTA_SAIDA / f"{nome}.png", binaria, corpo_mask, h, w,
             raio_fechamento=FECHAMENTO_EXTRA.get(nome, 4),
