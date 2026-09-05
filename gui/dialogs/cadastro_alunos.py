@@ -57,6 +57,7 @@ from core.validators import (
     FREQUENCIA_SEMANAL_OPCOES,
     SEXO_OPCOES,
     TEMPO_TREINO_OPCOES,
+    validar_altura,
     validar_frequencia_semanal,
     validar_idade,
     validar_nome_completo,
@@ -134,8 +135,19 @@ class _CampoFormulario(QWidget):
 
     def _marcar_campo(self, com_erro: bool) -> None:
         cor_borda = Cores.ERRO if com_erro else Cores.BORDA
-        if isinstance(self.campo, QLineEdit):
-            self.campo.setStyleSheet(
+        # `self.campo` normalmente É o QLineEdit/QComboBox (Nome/Idade/Sexo
+        # etc.) -- mas pode ser um wrapper que só EMBRULHA um deles junto de
+        # outro widget ao lado (ex.: o sufixo fixo "m" da Altura). Nesse
+        # caso, estiliza o campo de verdade lá dentro, não o wrapper (que
+        # não tem borda/fundo próprios) -- comportamento aditivo, não muda
+        # nada para quem já passava o QLineEdit/QComboBox direto.
+        campo = self.campo
+        if not isinstance(campo, (QLineEdit, QComboBox)):
+            campo = campo.findChild(QLineEdit) or campo.findChild(QComboBox)
+            if campo is None:
+                return
+        if isinstance(campo, QLineEdit):
+            campo.setStyleSheet(
                 f"""
                 QLineEdit {{
                     background-color: {Cores.SUPERFICIE};
@@ -149,14 +161,14 @@ class _CampoFormulario(QWidget):
                 QLineEdit:focus {{ border: 1px solid {Cores.AZUL_PRIMARIO}; }}
                 """
             )
-        elif isinstance(self.campo, QComboBox):
+        elif isinstance(campo, QComboBox):
             # A causa do dropdown "invisível" é a QComboBox herdar a paleta
             # escura do sistema para o popup (QAbstractItemView) enquanto o
             # campo fechado usa cores claras definidas aqui. Sem estilizar
             # explicitamente QAbstractItemView (e seus itens/hover/seleção),
             # o Qt usa a paleta padrão do SO para a lista suspensa, que no
             # Windows costuma ficar com texto claro sobre fundo claro.
-            self.campo.setStyleSheet(
+            campo.setStyleSheet(
                 f"""
                 QComboBox {{
                     background-color: {Cores.SUPERFICIE};
@@ -239,8 +251,59 @@ def _criar_cartao() -> QFrame:
     return cartao
 
 
+class _CampoAlturaMascarada(QLineEdit):
+    """QLineEdit com máscara de entrada EM TEMPO REAL para a altura, no
+    formato METROS.CENTÍMETROS -- o personal digita só números ("186") e o
+    campo já mostra "1.86" a cada tecla, sem precisar digitar "." nem ",".
+
+    A ideia (mesmo princípio de máscara de valor monetário: dígitos entram
+    pela direita, o separador decimal é sempre inserido pela própria
+    máscara): a cada edição, extrai só os dígitos já digitados (ignorando
+    o "." que a própria máscara pôs ali antes -- ele nunca conta como
+    dígito) e reformata do zero -- os 2 últimos dígitos são sempre as casas
+    decimais, o que sobrar (no máximo 1, altura cabe em 0-9 metros e
+    poucos) é a parte inteira:
+
+        ""    -> ""
+        "1"   -> "1"
+        "18"  -> "1.8"
+        "186" -> "1.86"
+        "1867"-> "1.86" (4º dígito ignorado -- só 3 fazem sentido pra altura)
+
+    Conectado a `textEdited` (não `textChanged`): esse sinal só dispara
+    numa edição de verdade do usuário, nunca por causa do nosso próprio
+    `setText` de reformatação -- é o que evita o loop infinito "edita ->
+    reformata -> dispara sinal de novo -> reformata de novo -> ..." sem
+    precisar bloquear sinais manualmente.
+    """
+
+    _MAX_DIGITOS = 3  # 1 casa inteira + 2 decimais -- ver docstring acima
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMaxLength(4)  # "d.dd" -- teto redundante, a máscara já limita sozinha
+        self.textEdited.connect(self._aplicar_mascara)
+
+    def _aplicar_mascara(self, texto: str) -> None:
+        digitos = "".join(caractere for caractere in texto if caractere.isdigit())
+        digitos = digitos[: self._MAX_DIGITOS]
+
+        if len(digitos) <= 1:
+            novo_texto = digitos
+        elif len(digitos) == 2:
+            novo_texto = f"{digitos[0]}.{digitos[1]}"
+        else:
+            novo_texto = f"{digitos[0]}.{digitos[1:]}"
+
+        # setText() dispara textChanged, mas não textEdited (ver docstring
+        # da classe) -- reentrada seria só um problema se estivéssemos
+        # ouvindo textChanged aqui.
+        self.setText(novo_texto)
+        self.setCursorPosition(len(novo_texto))
+
+
 class DadosAlunoStep(QWidget):
-    """Etapa 1 do cadastro: nome completo, idade e sexo."""
+    """Etapa 1 do cadastro: nome completo, idade, sexo e altura."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -329,17 +392,58 @@ class DadosAlunoStep(QWidget):
         )
         layout_cartao.addWidget(self._grupo_sexo)
 
+        # Altura do aluno (m) -- dado permanente do cadastro (como idade e
+        # sexo), não uma medida por avaliação. Usada pelo cálculo de
+        # composição corporal na Etapa 7 (método RFM, ver ComposicaoCorporalStep).
+        # Formato oficial: METROS.CENTÍMETROS (ex.: "1.75" = 1,75 m = 175 cm,
+        # ver core.validators.validar_altura) -- o personal digita só
+        # números ("186") e `_CampoAlturaMascarada` já mostra "1.86" em
+        # tempo real (ver essa classe acima). O "m" ao lado é só indicação
+        # de unidade, um QLabel fixo, NUNCA parte do texto digitado/validado
+        # no QLineEdit (por isso os dois em um wrapper próprio, e não direto
+        # em `_CampoFormulario` -- ver o suporte a wrapper em `_marcar_campo`).
+        self._campo_altura = _CampoAlturaMascarada()
+        self._campo_altura.setPlaceholderText("1.75")
+        # Ao sair do campo, normaliza pro padrão oficial (2 casas decimais)
+        # os casos incompletos que a máscara sozinha não fecha -- ex.: o
+        # personal digitou só "1" (mostra "1") e trocou de campo antes de
+        # completar os 3 dígitos; aqui vira "1.00". Reusa `validar_altura`
+        # em vez de duplicar a formatação.
+        self._campo_altura.editingFinished.connect(self._formatar_altura)
+
+        _wrapper_altura = QWidget()
+        _layout_wrapper_altura = QHBoxLayout(_wrapper_altura)
+        _layout_wrapper_altura.setContentsMargins(0, 0, 0, 0)
+        _layout_wrapper_altura.setSpacing(10)
+        _layout_wrapper_altura.addWidget(self._campo_altura, stretch=1)
+        _rotulo_unidade_altura = QLabel("m")
+        _rotulo_unidade_altura.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: {Cores.TEXTO_SECUNDARIO}; font-size: 16px; font-weight: 700;"
+        )
+        _layout_wrapper_altura.addWidget(_rotulo_unidade_altura)
+
+        self._grupo_altura = _CampoFormulario(
+            "Altura:",
+            _wrapper_altura,
+            tamanho_fonte_label=15,
+            tamanho_fonte_campo=16,
+        )
+        layout_cartao.addWidget(self._grupo_altura)
+
         layout_raiz.addWidget(cartao)
 
         # Tab entre os campos segue a ordem natural em que foram criados.
         self.setTabOrder(self._campo_nome, self._campo_idade)
         self.setTabOrder(self._campo_idade, self._campo_sexo)
+        self.setTabOrder(self._campo_sexo, self._campo_altura)
 
     def obter_dados_validados(self):
         """Valida os campos; retorna um dict com os dados ou None se inválido."""
         self._grupo_nome.limpar_erro()
         self._grupo_idade.limpar_erro()
         self._grupo_sexo.limpar_erro()
+        self._grupo_altura.limpar_erro()
 
         nome = self._campo_nome.text()
         erro_nome = validar_nome_completo(nome)
@@ -349,6 +453,9 @@ class DadosAlunoStep(QWidget):
 
         sexo = self._campo_sexo.currentData()
         erro_sexo = validar_sexo(sexo)
+
+        altura_texto = self._campo_altura.text()
+        altura_m, erro_altura = validar_altura(altura_texto)
 
         valido = True
         if erro_nome:
@@ -360,6 +467,9 @@ class DadosAlunoStep(QWidget):
         if erro_sexo:
             self._grupo_sexo.mostrar_erro(erro_sexo)
             valido = False
+        if erro_altura:
+            self._grupo_altura.mostrar_erro(erro_altura)
+            valido = False
 
         if not valido:
             return None
@@ -368,15 +478,29 @@ class DadosAlunoStep(QWidget):
             "nome_completo": nome.strip(),
             "idade": idade,
             "sexo": sexo,
+            "altura_m": altura_m,
         }
+
+    def _formatar_altura(self) -> None:
+        """Normaliza a altura pro padrão oficial ao sair do campo -- sempre
+        2 casas decimais e ponto, nunca o "1,7"/"1.8" cru que o personal
+        pode ter digitado (ver especificação em `validar_altura`). Não
+        mexe no texto se o valor ainda for inválido/incompleto -- o erro
+        (se houver) só aparece ao tentar avançar, em `obter_dados_validados`.
+        """
+        altura_m, erro = validar_altura(self._campo_altura.text())
+        if erro is None:
+            self._campo_altura.setText(f"{altura_m:.2f}")
 
     def limpar(self) -> None:
         self._campo_nome.clear()
         self._campo_idade.clear()
         self._campo_sexo.setCurrentIndex(0)
+        self._campo_altura.clear()
         self._grupo_nome.limpar_erro()
         self._grupo_idade.limpar_erro()
         self._grupo_sexo.limpar_erro()
+        self._grupo_altura.limpar_erro()
 
     def focar_primeiro_campo(self) -> None:
         self._campo_nome.setFocus()
@@ -1684,13 +1808,21 @@ _CAMINHO_IMAGEM_MUSCULO_GORDURA = str(
 # pelo QDoubleValidator da Etapa 6 (_LinhaMedida), reaproveitado aqui para
 # manter o mesmo critério em ambas as etapas.
 _LIMITE_MEDIDA = 300.0
-_LIMITE_PERCENTUAL = 100.0
 
 # (chave, rótulo exibido na linha da tabela, tipo de célula, teto numérico).
 # tipo: "data" (QDateEdit dd/MM/aaaa) | "numero" (QLineEdit com validador,
 # aceita vírgula ou ponto) | "resultado" (QLabel calculado, somente leitura).
 # "datas" é sempre a primeira linha de cada tabela.
-_LINHAS_DOBRAS_CUTANEAS = [
+#
+# IMPORTANTE: apesar do nome da variável (histórico -- essas linhas nunca
+# foram dobras cutâneas de verdade, e sim CIRCUNFERÊNCIAS reavaliadas ao
+# longo do acompanhamento), o card exibido na tela chama-se hoje
+# "Circunferências (Reavaliação)" (ver `bloco_circunferencias` em
+# `ComposicaoCorporalStep`) -- as dobras cutâneas REAIS (mm) usadas no
+# cálculo de composição corporal (protocolo de Jackson & Pollock de 7
+# dobras) são uma tabela própria, separada, ver `_LINHAS_DOBRAS_REAIS`
+# abaixo. Nenhuma medida daqui entra nesse cálculo.
+_LINHAS_CIRCUNFERENCIAS_REAVALIACAO = [
     ("datas", "Datas:", "data", None),
     ("ombro", "Ombro", "numero", _LIMITE_MEDIDA),
     ("torax", "Tórax", "numero", _LIMITE_MEDIDA),
@@ -1702,14 +1834,48 @@ _LINHAS_DOBRAS_CUTANEAS = [
     ("braco_d", "Braço (D)", "numero", _LIMITE_MEDIDA),
     ("braco_d_contraido", "Braço (D) Contraído", "numero", _LIMITE_MEDIDA),
 ]
+
+# Teto plausível para uma dobra cutânea isolada, em milímetros -- generoso o
+# bastante para qualquer dobra real (a soma das 7 raramente passa de ~200mm
+# em protocolos clínicos), mas ainda bloqueia digitação de valores absurdos
+# (ex.: "999").
+_LIMITE_DOBRA_MM = 100.0
+
+# As 7 dobras cutâneas do protocolo de Jackson & Pollock (JP7) -- em
+# MILÍMETROS, nunca confundir com as circunferências (cm) da tabela acima.
+# "dobra_abdominal"/"coxa_dobra" (em vez de "abdominal"/"coxa_d"/"coxa_e")
+# evita colidir com as chaves já usadas pelas circunferências/Avaliação
+# Física, que são medidas DIFERENTES do mesmo nome comum ("Abdominal",
+# "Coxa").
+_LINHAS_DOBRAS_REAIS = [
+    ("peitoral", "Peitoral", "numero", _LIMITE_DOBRA_MM),
+    ("axilar_media", "Axilar média", "numero", _LIMITE_DOBRA_MM),
+    ("triceps", "Tríceps", "numero", _LIMITE_DOBRA_MM),
+    ("subescapular", "Subescapular", "numero", _LIMITE_DOBRA_MM),
+    ("dobra_abdominal", "Abdominal", "numero", _LIMITE_DOBRA_MM),
+    ("supra_iliaca", "Supra-ilíaca", "numero", _LIMITE_DOBRA_MM),
+    ("coxa_dobra", "Coxa", "numero", _LIMITE_DOBRA_MM),
+]
+_CHAVES_DOBRAS_7 = tuple(chave for chave, _rotulo, _tipo, _maximo in _LINHAS_DOBRAS_REAIS)
+_ROTULOS_DOBRAS_7 = {chave: rotulo for chave, rotulo, _tipo, _maximo in _LINHAS_DOBRAS_REAIS}
+
 _LINHAS_PESO = [
     ("peso", "Peso (kg)", "numero", _LIMITE_MEDIDA),
 ]
+# "datas" aqui é "resultado" (não "data" como na tabela de Circunferências
+# acima) de propósito: a data de cada reavaliação já é digitada uma única
+# vez, na tabela de Circunferências -- esta apenas espelha a mesma data em
+# cada coluna (ver `_recalcular_composicao`), sem virar uma segunda fonte
+# de verdade que o personal precisaria preencher (e manter sincronizada) de
+# novo aqui. Ordem das linhas segue o fluxo de cálculo pedido na
+# especificação (soma -> densidade -> % -> massa gorda -> massa magra).
 _LINHAS_COMPOSICAO_CORPORAL = [
-    ("datas", "Datas:", "data", None),
-    ("massa_magra", "Massa Magra (kg)", "resultado", None),
+    ("datas", "Datas:", "resultado", None),
+    ("soma_dobras", "Soma das 7 Dobras (mm)", "resultado", None),
+    ("densidade_corporal", "Densidade Corporal (g/cm³)", "resultado", None),
+    ("percentual_gordura", "% Gordura Corporal", "resultado", None),
     ("massa_gorda", "Massa Gorda (kg)", "resultado", None),
-    ("percentual_gordura", "% Gordura Corporal", "numero", _LIMITE_PERCENTUAL),
+    ("massa_magra", "Massa Magra (kg)", "resultado", None),
 ]
 
 # Quatro colunas de reavaliação (o mesmo aluno preenchendo esta tabela ao
@@ -1986,17 +2152,134 @@ class _ImagemProporcional(QLabel):
         )
 
 
-class ComposicaoCorporalStep(QWidget):
-    """Etapa 7 do cadastro: dobras cutâneas, peso e composição corporal.
+# -- % de gordura corporal: protocolo de Jackson & Pollock de 7 dobras ----
+#
+# Fórmula fixada por especificação -- NÃO usa RFM, cintura/altura nem
+# qualquer circunferência: usa exclusivamente SEXO, IDADE, PESO e as 7
+# DOBRAS CUTÂNEAS (mm) de `_LINHAS_DOBRAS_REAIS` (Peitoral, Axilar média,
+# Tríceps, Subescapular, Abdominal, Supra-ilíaca, Coxa). As circunferências
+# da tabela ao lado (Ombro/Tórax/Cintura/Abdominal/Quadril/Braço) continuam
+# existindo só para acompanhamento -- nenhuma delas entra neste cálculo.
+#
+# Fluxo (ver também especificação, seção 15):
+#
+#   S = soma das 7 dobras (mm)
+#
+#   Densidade corporal:
+#     Homem:  DC = 1.112   - 0.00043499×S + 0.00000055×S² - 0.00028826×idade
+#     Mulher: DC = 1.097   - 0.00046971×S + 0.00000056×S² - 0.00012828×idade
+#
+#   % Gordura (equação de Siri) = (495 / DC) - 450
+#   Massa gorda = peso × (%gordura / 100)
+#   Massa magra = peso - massa gorda
+_CONSTANTES_JP7 = {
+    "Masculino": {
+        "intercepto": 1.112,
+        "coef_s": 0.00043499,
+        "coef_s2": 0.00000055,
+        "coef_idade": 0.00028826,
+    },
+    "Feminino": {
+        "intercepto": 1.097,
+        "coef_s": 0.00046971,
+        "coef_s2": 0.00000056,
+        "coef_idade": 0.00012828,
+    },
+}
 
-    Vem logo depois da Avaliação Física (Etapa 6), igual para os dois sexos
-    -- a imagem músculo x gordura é a mesma nos dois casos, então esta etapa
-    não precisa de `ao_entrar` para reagir ao sexo do aluno (diferente da
-    Etapa 6, que troca de boneco anatômico).
+
+def _calcular_composicao_jp7(
+    sexo: Optional[str],
+    idade: Optional[int],
+    peso: Optional[float],
+    dobras: Dict[str, Optional[float]],
+) -> Optional[dict]:
+    """Composição corporal pelo protocolo JP7 + Siri (ver comentário acima).
+
+    `dobras` é um dict chave (ver `_CHAVES_DOBRAS_7`) -> valor em mm. Retorna
+    None se faltar sexo, idade, peso OU qualquer uma das 7 dobras, ou se o
+    sexo não tiver equação JP7 definida (só Masculino/Feminino -- "Outro" e
+    "Prefiro não informar", opções válidas na Etapa 1, não têm coeficientes
+    clínicos publicados). Nunca calcula parcialmente nem assume 0 para dado
+    ausente.
+
+    NÃO valida se o resultado é fisicamente possível -- isso é
+    responsabilidade de `_resultado_fisicamente_valido`, chamada
+    separadamente por quem exibe/salva o resultado (nunca mascarar aqui
+    dentro, ver especificação seção 10).
+    """
+    constantes = _CONSTANTES_JP7.get(sexo)
+    if constantes is None or idade is None or peso is None:
+        return None
+    valores_dobras = [dobras.get(chave) for chave in _CHAVES_DOBRAS_7]
+    if any(valor is None for valor in valores_dobras):
+        return None
+
+    soma = sum(valores_dobras)
+    densidade = (
+        constantes["intercepto"]
+        - constantes["coef_s"] * soma
+        + constantes["coef_s2"] * (soma ** 2)
+        - constantes["coef_idade"] * idade
+    )
+    percentual = (495 / densidade) - 450
+    massa_gorda = peso * (percentual / 100)
+    massa_magra = peso - massa_gorda
+    return {
+        "soma": soma,
+        "densidade": densidade,
+        "percentual": percentual,
+        "massa_gorda": massa_gorda,
+        "massa_magra": massa_magra,
+    }
+
+
+# Tolerância só para erro de ponto flutuante (ex.: 79.999999999999 vs 80.0
+# por causa de subtração/soma em cascata) -- nunca para "arredondar a favor"
+# um resultado realmente inválido; a formatação de exibição (2 casas
+# decimais) é o único arredondamento que o usuário vê.
+_EPSILON_COMPOSICAO = 1e-6
+
+
+def _resultado_fisicamente_valido(resultado: dict, peso: float) -> bool:
+    """True se o resultado calculado é fisicamente possível (ver
+    especificação, seção 10). Nunca força/"clampa" um valor fora da faixa --
+    só informa que o resultado é inválido, para os dados de entrada (dobras)
+    serem conferidos pelo personal.
+    """
+    if resultado["percentual"] < 0:
+        return False
+    if resultado["massa_gorda"] < 0:
+        return False
+    if resultado["massa_magra"] > peso + _EPSILON_COMPOSICAO:
+        return False
+    if resultado["massa_gorda"] > peso + _EPSILON_COMPOSICAO:
+        return False
+    return True
+
+
+class ComposicaoCorporalStep(QWidget):
+    """Etapa 7 do cadastro: circunferências, dobras cutâneas, peso e
+    composição corporal.
+
+    Vem logo depois da Avaliação Física (Etapa 6). A imagem músculo x
+    gordura é a mesma nos dois casos, mas o CÁLCULO da composição corporal
+    depende do sexo e da idade do aluno (protocolo de Jackson & Pollock de 7
+    dobras, ver `_calcular_composicao_jp7`) -- por isso, assim como a Etapa
+    6, esta etapa usa `ao_entrar` para ler esses dois dados já cadastrados
+    na Etapa 1. A altura NÃO entra neste cálculo (ver especificação, seção
+    12) -- continua cadastrada normalmente na Etapa 1, só não é lida aqui.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        # Preenchidos por `ao_entrar` com sexo e idade já cadastrados na
+        # Etapa 1 -- entram no protocolo JP7 (ver _calcular_composicao_jp7).
+        # Diferente de peso/dobras, não são por coluna: o aluno tem um único
+        # sexo/idade para as 4 reavaliações desta etapa.
+        self._sexo: Optional[str] = None
+        self._idade: Optional[int] = None
 
         # Mesmo ajuste da Etapa 6 (ver comentário lá): sem isto o
         # QStackedWidget do wizard trava a altura desta etapa no sizeHint,
@@ -2066,7 +2349,23 @@ class ComposicaoCorporalStep(QWidget):
         self._label_erro.hide()
         coluna_esquerda.addWidget(self._label_erro)
 
-        self._tabela_dobras, self._campos_dobras = _criar_tabela_widgets(_LINHAS_DOBRAS_CUTANEAS)
+        self._tabela_circunferencias, self._campos_circunferencias = _criar_tabela_widgets(
+            _LINHAS_CIRCUNFERENCIAS_REAVALIACAO
+        )
+        bloco_circunferencias = _criar_card_tabela(
+            "Circunferências (Reavaliação)", self._tabela_circunferencias
+        )
+        coluna_esquerda.addWidget(bloco_circunferencias)
+
+        # Dobras cutâneas de verdade (mm) -- únicas medidas usadas no
+        # cálculo de composição corporal (protocolo JP7, ver
+        # `_calcular_composicao_jp7`). Tabela própria, separada das
+        # circunferências acima, sem linha de "Datas:" própria (mesmo
+        # padrão da tabela de Peso abaixo): a data de cada reavaliação é a
+        # mesma já digitada na tabela de Circunferências.
+        self._tabela_dobras_reais, self._campos_dobras_reais = _criar_tabela_widgets(
+            _LINHAS_DOBRAS_REAIS
+        )
         # Peso fica numa tabela própria (linha separada da lista de dobras),
         # mas com a mesma largura de rótulo -- as colunas de dados de ambas
         # ficam alinhadas mesmo sendo dois QTableWidget diferentes.
@@ -2077,7 +2376,7 @@ class ComposicaoCorporalStep(QWidget):
         divisor_peso.setStyleSheet(f"background-color: {Cores.BORDA};")
 
         bloco_dobras = _criar_card_tabela(
-            "Dobras Cutâneas", self._tabela_dobras, divisor_peso, self._tabela_peso
+            "Dobras Cutâneas (mm)", self._tabela_dobras_reais, divisor_peso, self._tabela_peso
         )
         coluna_esquerda.addWidget(bloco_dobras)
 
@@ -2089,20 +2388,24 @@ class ComposicaoCorporalStep(QWidget):
 
         coluna_esquerda.addStretch(1)
 
-        # Massa Gorda/Magra são sempre recalculadas a partir do Peso e do %
-        # Gordura Corporal da MESMA coluna (mesma reavaliação) -- qualquer
-        # mudança num dos dois já atualiza o resultado na hora, sem precisar
-        # de um botão "calcular" separado.
+        # Data / Soma / Densidade / % Gordura / Massa Gorda / Massa Magra
+        # são sempre recalculados a partir da Data (Circunferências), do
+        # Peso e das 7 Dobras da MESMA coluna (mesma reavaliação) --
+        # qualquer mudança num desses campos já atualiza os resultados na
+        # hora, sem precisar de um botão "calcular" separado.
+        for campo_data in self._campos_circunferencias["datas"]:
+            campo_data.dateChanged.connect(self._recalcular_composicao)
         for campo_peso in self._campos_peso["peso"]:
             campo_peso.textChanged.connect(self._recalcular_composicao)
-        for campo_percentual in self._campos_composicao["percentual_gordura"]:
-            campo_percentual.textChanged.connect(self._recalcular_composicao)
+        for chave_dobra in _CHAVES_DOBRAS_7:
+            for campo_dobra in self._campos_dobras_reais[chave_dobra]:
+                campo_dobra.textChanged.connect(self._recalcular_composicao)
 
         # Campo obrigatório (ver `obter_dados_validados`): corrigir o valor
         # já limpa o erro daquele campo específico e esconde a mensagem
         # geral, em vez de deixá-la presa na tela mesmo após corrigido.
         self._campos_peso["peso"][0].textChanged.connect(self._limpar_erro_validacao)
-        self._campos_dobras["datas"][0].dateChanged.connect(self._limpar_erro_validacao)
+        self._campos_circunferencias["datas"][0].dateChanged.connect(self._limpar_erro_validacao)
 
         self._recalcular_composicao()
 
@@ -2129,52 +2432,103 @@ class ComposicaoCorporalStep(QWidget):
 
         layout_raiz.addWidget(cartao, stretch=1)
 
+    def ao_entrar(self, dados_coletados: dict) -> None:
+        """Chamado pelo wizard toda vez que essa etapa é exibida -- lê sexo
+        e idade já cadastrados na Etapa 1 (entram no protocolo JP7, ver
+        `_calcular_composicao_jp7`) e recalcula com os valores atuais.
+        """
+        self._sexo = dados_coletados.get("sexo")
+        self._idade = dados_coletados.get("idade")
+        self._recalcular_composicao()
+
     # -- Composição corporal: cálculo automático -------------------------
-    #
-    # O projeto não tem (nem documenta) nenhum protocolo de dobras cutâneas
-    # para estimar o % de gordura corporal a partir das medidas de dobras
-    # (procurado em todo o código-fonte -- ver mensagem de commit da tarefa
-    # para os termos buscados). Os rótulos usados aqui (Ombro, Tórax,
-    # Cintura, Abdominal, Quadril, Braço) também não correspondem aos
-    # pontos-padrão de nenhum protocolo conhecido (Pollock, Guedes,
-    # Faulkner...), que usam locais como tríceps/subescapular/supra-ilíaca/
-    # coxa -- então não há como mapear essas dobras para uma fórmula
-    # existente sem inventar uma. Por isso "% Gordura Corporal" continua um
-    # campo digitado pelo personal (validado como número), e só o que a
-    # tarefa define explicitamente -- Massa Gorda/Magra a partir de Peso e
-    # % Gordura -- é calculado automaticamente abaixo.
     def _recalcular_composicao(self) -> None:
+        campos_datas = self._campos_circunferencias["datas"]
         campos_peso = self._campos_peso["peso"]
-        campos_percentual = self._campos_composicao["percentual_gordura"]
+        labels_data = self._campos_composicao["datas"]
+        labels_soma = self._campos_composicao["soma_dobras"]
+        labels_densidade = self._campos_composicao["densidade_corporal"]
+        labels_percentual = self._campos_composicao["percentual_gordura"]
         labels_gorda = self._campos_composicao["massa_gorda"]
         labels_magra = self._campos_composicao["massa_magra"]
+        grupos_resultado = (labels_soma, labels_densidade, labels_percentual, labels_gorda, labels_magra)
 
         for coluna in range(_NUM_COLUNAS_REAVALIACAO):
-            peso = _texto_para_numero(campos_peso[coluna].text())
-            percentual = _texto_para_numero(campos_percentual[coluna].text())
+            # A data não é digitada de novo aqui -- só espelha a da tabela
+            # de Circunferências daquela mesma coluna (ver comentário em
+            # `_LINHAS_COMPOSICAO_CORPORAL`), sempre no formato dd/MM/aaaa.
+            data = _valor_data(campos_datas[coluna])
+            labels_data[coluna].setText(data if data else "—")
 
-            if peso is None or percentual is None:
-                # Nunca "0 kg"/"0%" inventado -- só o traço indicando que
-                # ainda faltam dados para calcular (ver dica no tooltip).
-                labels_gorda[coluna].setText("—")
-                labels_magra[coluna].setText("—")
-                dica = "Preencha o peso e o % de gordura corporal para calcular."
-                labels_gorda[coluna].setToolTip(dica)
-                labels_magra[coluna].setToolTip(dica)
+            peso = _texto_para_numero(campos_peso[coluna].text())
+            dobras = {
+                chave: _texto_para_numero(self._campos_dobras_reais[chave][coluna].text())
+                for chave in _CHAVES_DOBRAS_7
+            }
+
+            # Nunca "0 kg"/"0%"/"0,00%" inventado, nunca cálculo parcial --
+            # junta TODOS os motivos de não dar pra calcular ainda (dado
+            # ausente) antes de decidir, igual às demais etapas do wizard.
+            faltando = []
+            if not self._sexo:
+                faltando.append("o sexo (Etapa 1)")
+            elif self._sexo not in _CONSTANTES_JP7:
+                # Sexo preenchido (passa na validação da Etapa 1, que aceita
+                # "Outro"/"Prefiro não informar" -- ver SEXO_OPCOES), mas o
+                # protocolo JP7 só tem coeficientes para Masculino/Feminino.
+                faltando.append(
+                    f'um sexo Masculino ou Feminino na Etapa 1 (o protocolo de '
+                    f'Jackson & Pollock não é definido para "{self._sexo}")'
+                )
+            if not self._idade:
+                faltando.append("a idade (Etapa 1)")
+            if peso is None:
+                faltando.append("o peso")
+            for chave in _CHAVES_DOBRAS_7:
+                if dobras[chave] is None:
+                    faltando.append(f"a dobra cutânea {_ROTULOS_DOBRAS_7[chave]}")
+
+            if faltando:
+                itens = (
+                    ", ".join(faltando[:-1]) + " e " + faltando[-1]
+                    if len(faltando) > 1
+                    else faltando[0]
+                )
+                dica = f"Preencha {itens} para calcular a composição corporal."
+                for grupo in grupos_resultado:
+                    grupo[coluna].setText("—")
+                    grupo[coluna].setToolTip(dica)
                 continue
 
-            massa_gorda = peso * (percentual / 100)
-            massa_magra = peso - massa_gorda
-            labels_gorda[coluna].setText(f"{_formatar_numero(massa_gorda)} kg")
-            labels_magra[coluna].setText(f"{_formatar_numero(massa_magra)} kg")
-            labels_gorda[coluna].setToolTip("")
-            labels_magra[coluna].setToolTip("")
+            # `faltando` vazio garante sexo/idade/peso/as 7 dobras presentes
+            # -- `_calcular_composicao_jp7` não pode retornar None aqui.
+            resultado = _calcular_composicao_jp7(self._sexo, self._idade, peso, dobras)
+            if not _resultado_fisicamente_valido(resultado, peso):
+                # Nunca "clampar" (max(0, ...) etc.) -- avisa que os dados
+                # de entrada (dobras) precisam ser conferidos (ver
+                # especificação, seção 10), sem inventar um número.
+                dica = (
+                    "Resultado matematicamente impossível com esses valores -- "
+                    "verifique as dobras cutâneas informadas."
+                )
+                for grupo in grupos_resultado:
+                    grupo[coluna].setText("—")
+                    grupo[coluna].setToolTip(dica)
+                continue
+
+            labels_soma[coluna].setText(f"{_formatar_numero(resultado['soma'], 2)} mm")
+            labels_densidade[coluna].setText(_formatar_numero(resultado["densidade"], 4))
+            labels_percentual[coluna].setText(f"{_formatar_numero(resultado['percentual'], 2)}%")
+            labels_gorda[coluna].setText(f"{_formatar_numero(resultado['massa_gorda'], 2)} kg")
+            labels_magra[coluna].setText(f"{_formatar_numero(resultado['massa_magra'], 2)} kg")
+            for grupo in grupos_resultado:
+                grupo[coluna].setToolTip("")
 
     # -- Validação ao avançar ---------------------------------------------
 
     def _limpar_erro_validacao(self) -> None:
         self._label_erro.hide()
-        _marcar_campo_erro(self._campos_dobras["datas"][0], com_erro=False)
+        _marcar_campo_erro(self._campos_circunferencias["datas"][0], com_erro=False)
         _marcar_campo_erro(self._campos_peso["peso"][0], com_erro=False)
 
     def _mostrar_erro_validacao(self, mensagem: str, campo: QWidget) -> None:
@@ -2186,14 +2540,15 @@ class ComposicaoCorporalStep(QWidget):
     def obter_dados_validados(self):
         """Exige data e peso da primeira reavaliação (coluna 0) -- sem eles
         não há um registro de composição corporal utilizável. As demais
-        dobras, o % de gordura e as colunas de reavaliações futuras
-        continuam opcionais (mesmo espírito "sem preenchimento obrigatório"
-        da Etapa 6): o personal pode completá-las ao longo do
-        acompanhamento, em visitas seguintes.
+        medidas (circunferências, dobras cutâneas) e as colunas de
+        reavaliações futuras continuam opcionais (mesmo espírito "sem
+        preenchimento obrigatório" da Etapa 6): o personal pode completá-las
+        ao longo do acompanhamento, em visitas seguintes -- só não recebem
+        um resultado de composição corporal calculado enquanto isso.
         """
         self._limpar_erro_validacao()
 
-        campo_data = self._campos_dobras["datas"][0]
+        campo_data = self._campos_circunferencias["datas"][0]
         if campo_data.date() == _DATA_SENTINELA:
             self._mostrar_erro_validacao("Informe uma data válida.", campo_data)
             return None
@@ -2209,41 +2564,72 @@ class ComposicaoCorporalStep(QWidget):
         def extrair_datas(matriz):
             return [_valor_data(w) for w in matriz["datas"]]
 
-        dobras_cutaneas = {"datas": extrair_datas(self._campos_dobras)}
-        for chave, _rotulo, tipo, _maximo in _LINHAS_DOBRAS_CUTANEAS:
+        circunferencias = {"datas": extrair_datas(self._campos_circunferencias)}
+        for chave, _rotulo, tipo, _maximo in _LINHAS_CIRCUNFERENCIAS_REAVALIACAO:
             if tipo == "numero":
-                dobras_cutaneas[chave] = extrair_numeros(self._campos_dobras, chave)
+                circunferencias[chave] = extrair_numeros(self._campos_circunferencias, chave)
+
+        dobras_cutaneas = {
+            chave: extrair_numeros(self._campos_dobras_reais, chave) for chave in _CHAVES_DOBRAS_7
+        }
 
         peso = extrair_numeros(self._campos_peso, "peso")
-        percentual_gordura = extrair_numeros(self._campos_composicao, "percentual_gordura")
-
+        # Resultados agora são colunas calculadas ("resultado"), não mais
+        # digitadas -- recalcula pelo mesmo método usado ao vivo em
+        # `_recalcular_composicao` (mesma fonte de verdade: `_calcular_
+        # composicao_jp7` + `_resultado_fisicamente_valido`), em vez de ler
+        # o texto já formatado ("22,80%"/"—") do QLabel. Só reporta um
+        # resultado quando sexo/idade/peso/as 7 dobras estão presentes E o
+        # resultado é fisicamente possível -- mesmo critério "tudo ou nada"
+        # usado ao vivo na tela, nunca um valor parcial/clampado salvo.
+        soma_dobras = []
+        densidade_corporal = []
+        percentual_gordura = []
         massa_gorda = []
         massa_magra = []
         for coluna in range(_NUM_COLUNAS_REAVALIACAO):
-            p, pct = peso[coluna], percentual_gordura[coluna]
-            if p is None or pct is None:
+            p = peso[coluna]
+            dobras_coluna = {chave: dobras_cutaneas[chave][coluna] for chave in _CHAVES_DOBRAS_7}
+            resultado = _calcular_composicao_jp7(self._sexo, self._idade, p, dobras_coluna)
+            if resultado is None or not _resultado_fisicamente_valido(resultado, p):
+                soma_dobras.append(None)
+                densidade_corporal.append(None)
+                percentual_gordura.append(None)
                 massa_gorda.append(None)
                 massa_magra.append(None)
             else:
-                gorda = round(p * (pct / 100), 1)
-                massa_gorda.append(gorda)
-                massa_magra.append(round(p - gorda, 1))
+                soma_dobras.append(round(resultado["soma"], 2))
+                densidade_corporal.append(round(resultado["densidade"], 4))
+                percentual_gordura.append(round(resultado["percentual"], 2))
+                massa_gorda.append(round(resultado["massa_gorda"], 2))
+                massa_magra.append(round(resultado["massa_magra"], 2))
 
         composicao_corporal = {
-            "datas": extrair_datas(self._campos_composicao),
-            "massa_magra": massa_magra,
-            "massa_gorda": massa_gorda,
+            # Mesma data da tabela de Circunferências (ver comentário em
+            # `_LINHAS_COMPOSICAO_CORPORAL`) -- não é lida de novo daqui, é
+            # o mesmo dado, só espelhado.
+            "datas": circunferencias["datas"],
+            "soma_dobras": soma_dobras,
+            "densidade_corporal": densidade_corporal,
             "percentual_gordura": percentual_gordura,
+            "massa_gorda": massa_gorda,
+            "massa_magra": massa_magra,
         }
 
         return {
+            "circunferencias": circunferencias,
             "dobras_cutaneas": dobras_cutaneas,
             "peso": peso,
             "composicao_corporal": composicao_corporal,
         }
 
     def limpar(self) -> None:
-        for matriz in (self._campos_dobras, self._campos_peso, self._campos_composicao):
+        for matriz in (
+            self._campos_circunferencias,
+            self._campos_dobras_reais,
+            self._campos_peso,
+            self._campos_composicao,
+        ):
             for widgets in matriz.values():
                 for widget in widgets:
                     _limpar_widget(widget)

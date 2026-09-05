@@ -47,6 +47,7 @@ def inicializar_banco() -> None:
                 nome_completo TEXT NOT NULL,
                 idade INTEGER NOT NULL,
                 sexo TEXT NOT NULL,
+                altura_m REAL,
                 treinou_antes TEXT,
                 tempo_treinamento TEXT,
                 tempo_sem_atividade TEXT,
@@ -97,6 +98,18 @@ def _garantir_colunas_anamnese(conexao: sqlite3.Connection) -> None:
     colunas_existentes = {
         linha["name"] for linha in conexao.execute("PRAGMA table_info(alunos)")
     }
+
+    # A altura da Etapa 1 passou de centímetros ("altura_cm") para o formato
+    # metros.centímetros ("altura_m", ex.: 1.75) -- bancos criados no
+    # intervalo curto entre as duas versões têm a coluna antiga. Renomeia em
+    # vez de duplicar, convertendo os valores já salvos (cm -> m) em vez de
+    # perdê-los.
+    if "altura_cm" in colunas_existentes and "altura_m" not in colunas_existentes:
+        conexao.execute("ALTER TABLE alunos RENAME COLUMN altura_cm TO altura_m")
+        conexao.execute("UPDATE alunos SET altura_m = altura_m / 100.0 WHERE altura_m IS NOT NULL")
+        colunas_existentes.discard("altura_cm")
+        colunas_existentes.add("altura_m")
+
     colunas_novas_texto = (
         "treinou_antes",
         "tempo_treinamento",
@@ -114,9 +127,11 @@ def _garantir_colunas_anamnese(conexao: sqlite3.Connection) -> None:
         "cirurgia_tem",
         "cirurgia_qual",
     )
-    # Medidas da Etapa 6 (avaliação física) são numéricas -- REAL, não TEXT,
-    # para não perder o tipo ao ler de volta um banco criado antes delas.
+    # Medidas da Etapa 6 (avaliação física) e a altura da Etapa 1 são
+    # numéricas -- REAL, não TEXT, para não perder o tipo ao ler de volta um
+    # banco criado antes delas.
     colunas_novas_numericas = (
+        "altura_m",
         "medida_ombro",
         "medida_torax",
         "medida_cintura",

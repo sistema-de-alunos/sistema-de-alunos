@@ -13,6 +13,7 @@ class Aluno:
     idade: int
     sexo: str
     criado_em: str
+    altura_m: Optional[float] = None
     treinou_antes: Optional[str] = None
     tempo_treinamento: Optional[str] = None
     tempo_sem_atividade: Optional[str] = None
@@ -53,6 +54,7 @@ class AlunoService:
         nome_completo: str,
         idade: int,
         sexo: str,
+        altura_m: Optional[float] = None,
         treinou_antes: Optional[str] = None,
         tempo_treinamento: Optional[str] = None,
         tempo_sem_atividade: Optional[str] = None,
@@ -90,7 +92,7 @@ class AlunoService:
             cursor = conexao.execute(
                 """
                 INSERT INTO alunos (
-                    nome_completo, idade, sexo,
+                    nome_completo, idade, sexo, altura_m,
                     treinou_antes, tempo_treinamento, tempo_sem_atividade,
                     objetivo_principal, objetivo_outro,
                     frequencia_semanal, tempo_treino_dia,
@@ -107,12 +109,12 @@ class AlunoService:
                     medida_panturrilha_e, medida_panturrilha_d
                 )
                 VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
-                    nome_completo, idade, sexo,
+                    nome_completo, idade, sexo, altura_m,
                     treinou_antes, tempo_treinamento, tempo_sem_atividade,
                     objetivo_principal, objetivo_outro,
                     frequencia_semanal, tempo_treino_dia,
@@ -194,6 +196,7 @@ class AlunoService:
             idade=linha["idade"],
             sexo=linha["sexo"],
             criado_em=linha["criado_em"],
+            altura_m=linha["altura_m"],
             treinou_antes=linha["treinou_antes"],
             tempo_treinamento=linha["tempo_treinamento"],
             tempo_sem_atividade=linha["tempo_sem_atividade"],
