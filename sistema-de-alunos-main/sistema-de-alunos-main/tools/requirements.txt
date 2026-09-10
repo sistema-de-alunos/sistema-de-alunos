@@ -1,0 +1,7 @@
+# Dependências só para rodar tools/gerar_mascaras_corpo.py -- NÃO são
+# dependência do app (ver requirements.txt na raiz, que continua só com
+# PySide6). Instale com: pip install -r tools/requirements.txt
+Pillow
+numpy
+scipy
+scikit-image
