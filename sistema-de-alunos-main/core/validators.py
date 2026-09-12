@@ -16,7 +16,7 @@ IDADE_MAXIMA = 100
 ALTURA_MINIMA_M = 1.00
 ALTURA_MAXIMA_M = 2.50
 
-SEXO_OPCOES = ["Masculino", "Feminino", "Outro", "Prefiro não informar"]
+SEXO_OPCOES = ["Masculino", "Feminino"]
 
 
 def validar_nome_completo(nome: str) -> Optional[str]:

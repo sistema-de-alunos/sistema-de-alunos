@@ -78,6 +78,10 @@ def inicializar_banco() -> None:
                 medida_coxa_e REAL,
                 medida_panturrilha_e REAL,
                 medida_panturrilha_d REAL,
+                foto_frente TEXT,
+                foto_costas TEXT,
+                foto_lado_direito TEXT,
+                foto_lado_esquerdo TEXT,
                 criado_em TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
             )
             """
@@ -126,6 +130,13 @@ def _garantir_colunas_anamnese(conexao: sqlite3.Connection) -> None:
         "dor_qual",
         "cirurgia_tem",
         "cirurgia_qual",
+        # Etapa 8 (Registro de imagens) -- caminho do arquivo escolhido em
+        # cada uma das 4 posições, não dado de anamnese, mas some junto às
+        # demais colunas de texto opcionais pelo mesmo mecanismo incremental.
+        "foto_frente",
+        "foto_costas",
+        "foto_lado_direito",
+        "foto_lado_esquerdo",
     )
     # Medidas da Etapa 6 (avaliação física) e a altura da Etapa 1 são
     # numéricas -- REAL, não TEXT, para não perder o tipo ao ler de volta um

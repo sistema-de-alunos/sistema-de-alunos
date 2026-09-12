@@ -44,6 +44,10 @@ class Aluno:
     medida_coxa_e: Optional[float] = None
     medida_panturrilha_e: Optional[float] = None
     medida_panturrilha_d: Optional[float] = None
+    foto_frente: Optional[str] = None
+    foto_costas: Optional[str] = None
+    foto_lado_direito: Optional[str] = None
+    foto_lado_esquerdo: Optional[str] = None
 
 
 class AlunoService:
@@ -85,6 +89,10 @@ class AlunoService:
         medida_coxa_e: Optional[float] = None,
         medida_panturrilha_e: Optional[float] = None,
         medida_panturrilha_d: Optional[float] = None,
+        foto_frente: Optional[str] = None,
+        foto_costas: Optional[str] = None,
+        foto_lado_direito: Optional[str] = None,
+        foto_lado_esquerdo: Optional[str] = None,
     ) -> Aluno:
         nome_completo = nome_completo.strip()
         conexao = obter_conexao()
@@ -106,11 +114,13 @@ class AlunoService:
                     medida_braco_d, medida_braco_d_contraido,
                     medida_antebraco_e, medida_antebraco_d,
                     medida_coxa_d, medida_coxa_e,
-                    medida_panturrilha_e, medida_panturrilha_d
+                    medida_panturrilha_e, medida_panturrilha_d,
+                    foto_frente, foto_costas,
+                    foto_lado_direito, foto_lado_esquerdo
                 )
                 VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -129,6 +139,8 @@ class AlunoService:
                     medida_antebraco_e, medida_antebraco_d,
                     medida_coxa_d, medida_coxa_e,
                     medida_panturrilha_e, medida_panturrilha_d,
+                    foto_frente, foto_costas,
+                    foto_lado_direito, foto_lado_esquerdo,
                 ),
             )
             conexao.commit()
@@ -227,4 +239,8 @@ class AlunoService:
             medida_coxa_e=linha["medida_coxa_e"],
             medida_panturrilha_e=linha["medida_panturrilha_e"],
             medida_panturrilha_d=linha["medida_panturrilha_d"],
+            foto_frente=linha["foto_frente"],
+            foto_costas=linha["foto_costas"],
+            foto_lado_direito=linha["foto_lado_direito"],
+            foto_lado_esquerdo=linha["foto_lado_esquerdo"],
         )

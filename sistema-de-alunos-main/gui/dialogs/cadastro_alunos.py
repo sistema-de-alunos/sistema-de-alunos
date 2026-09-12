@@ -14,7 +14,7 @@ boneco anatômico de acordo com o sexo já cadastrado).
 
 import inspect
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 from core.qt_core import (
     QByteArray,
@@ -23,7 +23,7 @@ from core.qt_core import (
     QComboBox,
     QDate,
     QDateEdit,
-    QDoubleValidator,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -1410,70 +1410,6 @@ class HistoricoSaudeStep(QWidget):
 # -- Etapa 6: Avaliação física ----------------------------------------------
 
 
-class _LinhaMedida(QWidget):
-    """Uma linha da tabela de medidas: rótulo + campo numérico (cm)."""
-
-    def __init__(self, texto_label: str, parent=None):
-        super().__init__(parent)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(16)
-
-        label = QLabel(texto_label)
-        label.setFixedWidth(150)
-        label.setStyleSheet(
-            f"background: transparent; border: none; "
-            f"color: {Cores.TEXTO_PRIMARIO}; font-size: {Fontes.TAMANHO_TEXTO}px; font-weight: 600;"
-        )
-        layout.addWidget(label)
-
-        self.campo = QLineEdit()
-        self.campo.setPlaceholderText("cm")
-        # Desliga o frame nativo do QLineEdit (o "sunken panel" que o estilo
-        # do Windows desenha por baixo do widget). Com ele ligado, o estilo
-        # nativo soma sua própria borda 3D (mais clara embaixo/à direita,
-        # para simular profundidade) por cima da borda de 4 lados definida
-        # no QSS abaixo -- em telas com escala fracionária (125%/150%), essa
-        # borda nativa clara some contra o fundo branco exatamente no lado de
-        # baixo, dando a impressão de "borda inferior aberta". Desativando o
-        # frame nativo, a única borda desenhada passa a ser a do QSS, igual
-        # e fechada nos 4 lados.
-        self.campo.setFrame(False)
-        # 96px (e não os 80px originais) -- com padding 10px de cada lado e
-        # fonte 16px em negrito, "120" (o maior valor plausível, ver
-        # QDoubleValidator abaixo) quase encostava na borda; centralizado
-        # (não mais alinhado à direita) fica claramente separado do rótulo à
-        # esquerda mesmo já com o espaçamento maior do layout.
-        self.campo.setFixedWidth(96)
-        self.campo.setAlignment(Qt.AlignCenter)
-        validador = QDoubleValidator(0.0, 300.0, 1, self.campo)
-        validador.setNotation(QDoubleValidator.StandardNotation)
-        self.campo.setValidator(validador)
-        # Valor digitado precisa ser lido de relance: fonte maior e em negrito
-        # (14px normal ficava fraco/pequeno ao lado do rótulo em negrito),
-        # padding simétrico (só padding-left sem padding-right empurrava o
-        # texto right-aligned quase até a borda) e borda um pouco mais forte
-        # pra marcar bem a caixa contra o fundo branco do cartão.
-        self.campo.setStyleSheet(
-            f"""
-            QLineEdit {{
-                background-color: {Cores.SUPERFICIE};
-                border: 1.5px solid {Cores.BORDA};
-                border-radius: 8px;
-                padding: 0 10px;
-                font-size: 16px;
-                font-weight: 700;
-                color: {Cores.TEXTO_PRIMARIO};
-                min-height: 36px;
-            }}
-            QLineEdit:focus {{ border: 1.5px solid {Cores.AZUL_PRIMARIO}; }}
-            """
-        )
-        layout.addWidget(self.campo)
-        layout.addStretch(1)
-
-
 def _cabecalho_bloco_medidas(texto: str, *, centralizado: bool = False) -> QFrame:
     """Faixa azul escura de topo de um bloco de medidas (ex.: "Circunferência
     Parte Superior (MASC)") -- mesmo tom do banner usado no topo da etapa,
@@ -1499,31 +1435,6 @@ def _cabecalho_bloco_medidas(texto: str, *, centralizado: bool = False) -> QFram
         titulo.setAlignment(Qt.AlignCenter)
     layout.addWidget(titulo)
     return cabecalho
-
-
-def _criar_bloco_medidas(titulo: str) -> Tuple[QFrame, QVBoxLayout]:
-    """Card independente de um bloco de medidas (cabeçalho azul + linhas
-    abaixo) -- reaproveita o mesmo cartão branco/borda das demais etapas
-    para o corpo do bloco ficar visualmente ligado ao cabeçalho azul.
-    Devolve o frame (para empilhar na coluna da tabela) e o layout interno
-    onde cada `_LinhaMedida` do bloco deve ser adicionada.
-    """
-    bloco = _criar_cartao()
-    layout_bloco = QVBoxLayout(bloco)
-    layout_bloco.setContentsMargins(0, 0, 0, 0)
-    layout_bloco.setSpacing(0)
-    layout_bloco.addWidget(_cabecalho_bloco_medidas(titulo))
-
-    corpo = QWidget()
-    corpo.setStyleSheet("background: transparent;")
-    layout_linhas = QVBoxLayout(corpo)
-    layout_linhas.setContentsMargins(20, 16, 20, 16)
-    # Mesmo 16px de antes entre linhas -- só a divisão em blocos mudou, o
-    # espaçamento entre rótulo+campo de cada medida permanece igual.
-    layout_linhas.setSpacing(16)
-    layout_bloco.addWidget(corpo)
-
-    return bloco, layout_linhas
 
 
 def _texto_para_numero(texto: str) -> Optional[float]:
@@ -1568,16 +1479,32 @@ _REGIAO_POR_CHAVE = {
 
 
 class AvaliacaoFisicaStep(QWidget):
-    """Etapa 6 do cadastro: medidas corporais com boneco anatômico interativo.
+    """Etapa 6 do cadastro: circunferências do aluno, em avaliações
+    dinâmicas, com boneco anatômico interativo ao lado.
+
+    "Avaliações dinâmicas" é o mesmo mecanismo já usado pela Etapa 7 --
+    ver `_criar_tabela_widgets`/`_adicionar_coluna_tabela`: a tabela
+    começa com uma única coluna (uma avaliação), e cada clique no botão
+    "+" acrescenta outra, sem tocar nas colunas já existentes.
 
     O boneco não guarda estado próprio de avaliação: ele só reflete, em
-    tempo real, quais campos de medida têm valor preenchido. Preencher ou
-    apagar uma medida já atualiza o destaque sozinho — não existe uma
-    seleção separada para sincronizar.
+    tempo real, quais REGIÕES têm ao menos uma medida preenchida em
+    QUALQUER avaliação (coluna) -- preencher ou apagar uma medida em
+    qualquer coluna já atualiza o destaque sozinho, sem seleção separada
+    para sincronizar. Clicar numa região do boneco foca o campo daquela
+    região na avaliação mais recente (`self._coluna_ativa`) -- a que o
+    personal provavelmente está preenchendo agora.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
+
+        # Quantidade ATUAL de colunas (avaliações) -- começa em 1 (nunca
+        # várias colunas vazias pré-criadas) e cresce a cada clique no
+        # botão "+" (`_adicionar_nova_avaliacao`).
+        self._num_colunas = _NUM_COLUNAS_INICIAL
+        # Índice da última coluna criada -- ver docstring da classe.
+        self._coluna_ativa = 0
 
         # Vertical=Ignored (e não Preferred, o padrão) -- sem isto, o
         # QStackedWidget do wizard (`CadastroAlunoWizard._stack`) nunca
@@ -1622,70 +1549,67 @@ class AvaliacaoFisicaStep(QWidget):
 
         layout_raiz.addWidget(cabecalho)
 
-        # Card com tabela de medidas (esquerda) + boneco interativo (direita).
+        # Card com a tabela de circunferências (esquerda) + boneco
+        # interativo (direita).
         cartao = _criar_cartao()
-        # Antes, o cartão nunca precisava disto: sem o QScrollArea acima, o
-        # tamanho natural da tabela (~1000px) sempre excedia o espaço
-        # disponível, e o cartão acabava ocupando tudo por pura falta de
-        # alternativa. Agora que a tabela pode ficar compacta e rolar, o
-        # cartão precisa de Expanding explícito para continuar preenchendo a
-        # altura disponível -- do contrário ele encolheria para o tamanho
-        # natural do boneco (bem menor) e sobraria um vão vazio embaixo.
+        # Antes, o cartão nunca precisava disto: sem o QScrollArea abaixo, o
+        # tamanho natural da tabela sempre excedia o espaço disponível, e o
+        # cartão acabava ocupando tudo por pura falta de alternativa. Agora
+        # que a tabela pode ficar compacta e rolar, o cartão precisa de
+        # Expanding explícito para continuar preenchendo a altura disponível
+        # -- do contrário ele encolheria para o tamanho natural do boneco
+        # (bem menor) e sobraria um vão vazio embaixo.
         cartao.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         layout_cartao = QHBoxLayout(cartao)
         layout_cartao.setContentsMargins(28, 24, 28, 24)
         layout_cartao.setSpacing(24)
 
-        # As 18 linhas (label + campo) empilhadas somam ~1000px de altura --
-        # bem mais do que cabe numa janela normal (960x600, o mínimo do
-        # app). Sem isto, o QVBoxLayout abaixo empurra sua altura mínima
-        # inteira pra cima até o QStackedWidget do wizard e daí até a janela
-        # principal: a tela só "funcionava" quando maximizada/fullscreen
-        # porque só aí sobrava altura de tela suficiente para acomodar esse
-        # mínimo -- em qualquer janela menor, as linhas ficavam espremidas
-        # abaixo do próprio tamanho mínimo (é aí que a borda inferior dos
-        # QLineEdit some: o conteúdo é cortado pela borda da janela/card,
-        # não um problema de estilo). Um QScrollArea rola o EXCESSO em vez
-        # de forçar a janela toda a crescer -- a tabela some no scroll só
-        # quando realmente não há espaço, mas nunca fica cortada/espremida.
+        self._tabela_circunferencias, self._campos_circunferencias = _criar_tabela_widgets(
+            _LINHAS_CIRCUNFERENCIAS
+        )
+
+        # Botão "+" -- único mecanismo desta etapa para criar uma nova
+        # avaliação: um clique acrescenta uma coluna contendo TODOS os
+        # campos de circunferência de uma vez (nunca um botão por campo,
+        # nunca uma coluna "solta" só para a data). Fica no cabeçalho do
+        # card, ao lado da linha "Datas:" -- mesmo estilo/posição já usados
+        # pelo botão equivalente da Etapa 7.
+        self._botao_nova_avaliacao = QPushButton("+")
+        self._botao_nova_avaliacao.setCursor(Qt.PointingHandCursor)
+        self._botao_nova_avaliacao.setFixedSize(28, 28)
+        self._botao_nova_avaliacao.setToolTip("Adicionar nova avaliação")
+        self._botao_nova_avaliacao.setStyleSheet(
+            """
+            QPushButton {
+                background-color: rgba(255, 255, 255, 35);
+                color: white;
+                border: 1px solid rgba(255, 255, 255, 110);
+                border-radius: 14px;
+                font-size: 18px;
+                font-weight: 700;
+            }
+            QPushButton:hover { background-color: rgba(255, 255, 255, 70); }
+            QPushButton:pressed { background-color: rgba(255, 255, 255, 110); }
+            """
+        )
+        self._botao_nova_avaliacao.clicked.connect(self._adicionar_nova_avaliacao)
+
+        bloco_circunferencias = _criar_card_tabela(
+            "Circunferências",
+            self._tabela_circunferencias,
+            widget_extra_cabecalho=self._botao_nova_avaliacao,
+        )
+
+        # QScrollArea: numa janela pequena, as 16 linhas da tabela (data +
+        # 15 medidas) podem exceder a altura disponível -- rolar o excesso
+        # evita que o card fique espremido ou corte conteúdo (mesma ideia
+        # já usada pela coluna esquerda da Etapa 7).
         painel_tabela = QWidget()
         painel_tabela.setStyleSheet("background: transparent;")
         coluna_tabela = QVBoxLayout(painel_tabela)
         coluna_tabela.setContentsMargins(0, 0, 4, 0)
-        # 28px aqui -- não é mais o espaço entre linhas (isso agora é o
-        # spacing de `layout_linhas` dentro de cada bloco, ver
-        # `_criar_bloco_medidas`), e sim o vão entre os dois cards
-        # (Parte Superior / Parte Inferior) empilhados nesta coluna: precisa
-        # ser nitidamente maior que o espaço entre linhas de um mesmo bloco
-        # para os dois cards lerem como blocos independentes, sem
-        # desperdiçar espaço.
-        coluna_tabela.setSpacing(28)
-
-        self._campos: Dict[str, QLineEdit] = {}
-
-        def _preencher_bloco(layout_linhas, linhas):
-            for chave, texto_label, _regiao in linhas:
-                linha = _LinhaMedida(texto_label)
-                linha.campo.textChanged.connect(self._recalcular_destaques)
-                self._campos[chave] = linha.campo
-                layout_linhas.addWidget(linha)
-
-        # Dois cards independentes (cabeçalho azul + linhas), em vez da
-        # antiga divisão em três rótulos dentro de uma tabela única --
-        # "Braços" passa a fazer parte do bloco superior, junto do resto das
-        # medidas de cima, igual à referência do personal.
-        bloco_superior, linhas_superior = _criar_bloco_medidas(
-            "Circunferência Parte Superior (MASC)"
-        )
-        _preencher_bloco(linhas_superior, _LINHAS_PARTE_SUPERIOR + _LINHAS_BRACOS)
-        coluna_tabela.addWidget(bloco_superior)
-
-        bloco_inferior, linhas_inferior = _criar_bloco_medidas(
-            "Circunferência Parte Inferior (MASC)"
-        )
-        _preencher_bloco(linhas_inferior, _LINHAS_PARTE_INFERIOR)
-        coluna_tabela.addWidget(bloco_inferior)
-
+        coluna_tabela.setSpacing(0)
+        coluna_tabela.addWidget(bloco_circunferencias)
         coluna_tabela.addStretch(1)
 
         rolagem_tabela = QScrollArea()
@@ -1739,6 +1663,13 @@ class AvaliacaoFisicaStep(QWidget):
         # deixar o cartão pequeno e colado no topo, com vão vazio embaixo.
         layout_raiz.addWidget(cartao, stretch=1)
 
+        # Conecta a coluna inicial (0) ao recálculo do destaque do boneco --
+        # mesma conexão que cada coluna nova recebe em
+        # `_adicionar_nova_avaliacao`. "datas" fica de fora de propósito:
+        # não corresponde a nenhuma região do boneco (ver _REGIAO_POR_CHAVE).
+        self._conectar_coluna_boneco(
+            [(chave, self._campos_circunferencias[chave][0]) for chave in _REGIAO_POR_CHAVE]
+        )
         self._recalcular_destaques()
 
     def ao_entrar(self, dados_coletados: dict) -> None:
@@ -1756,11 +1687,44 @@ class AvaliacaoFisicaStep(QWidget):
             pagina = self._placeholder_corpo
         self._pilha_corpo.setCurrentWidget(pagina)
 
+    # -- Avaliações dinâmicas: coluna nova ---------------------------------
+
+    def _conectar_coluna_boneco(self, pares_chave_widget) -> None:
+        """Liga o campo de UMA medida (de UMA coluna/avaliação) ao
+        recálculo do destaque do boneco -- usada tanto pela coluna inicial
+        (`__init__`) quanto por cada coluna nova (`_adicionar_nova_avaliacao`).
+        """
+        for _chave, widget in pares_chave_widget:
+            widget.textChanged.connect(self._recalcular_destaques)
+
+    def _adicionar_nova_avaliacao(self) -> None:
+        """Botão "+": cria uma coluna nova contendo TODOS os campos de
+        circunferência de uma vez -- nunca uma coluna "solta" só para a
+        data. Os dados das colunas já existentes não são tocados.
+        """
+        novos = _adicionar_coluna_tabela(
+            self._tabela_circunferencias, self._campos_circunferencias, _LINHAS_CIRCUNFERENCIAS
+        )
+        self._conectar_coluna_boneco(
+            [(chave, widget) for chave, widget in novos if chave in _REGIAO_POR_CHAVE]
+        )
+
+        self._num_colunas += 1
+        self._coluna_ativa = self._num_colunas - 1
+
+        # Rola até a coluna recém-criada -- sem isto, com muitas colunas já
+        # existentes, a nova nasceria fora da área visível.
+        barra = self._tabela_circunferencias.horizontalScrollBar()
+        barra.setValue(barra.maximum())
+
     def _recalcular_destaques(self) -> None:
+        # Uma região acende se QUALQUER avaliação (coluna) tem ao menos uma
+        # medida preenchida para ela -- o boneco mostra o histórico
+        # completo do aluno, não só a avaliação mais recente.
         regioes_ativas = {
-            _REGIAO_POR_CHAVE[chave]
-            for chave, campo in self._campos.items()
-            if campo.text().strip()
+            regiao
+            for chave, regiao in _REGIAO_POR_CHAVE.items()
+            if any(campo.text().strip() for campo in self._campos_circunferencias[chave])
         }
         # Os dois bonecos usam os mesmos ids de região (ver
         # IDS_REGIOES_MASCULINO/IDS_REGIOES_FEMININO) — atualizar os dois
@@ -1770,25 +1734,49 @@ class AvaliacaoFisicaStep(QWidget):
         self._corpo_feminino.definir_regioes_selecionadas(regioes_ativas)
 
     def _focar_campo_da_regiao(self, regiao_id: str) -> None:
-        """Interação inversa (item 14): clicar no boneco foca o primeiro
-        campo daquela região na tabela, pronto para o personal digitar."""
+        """Interação inversa: clicar no boneco foca o campo daquela região
+        na avaliação mais recente (`self._coluna_ativa`), pronto para o
+        personal digitar."""
         for chave, id_regiao in _REGIAO_POR_CHAVE.items():
             if id_regiao == regiao_id:
-                campo = self._campos[chave]
+                campo = self._campos_circunferencias[chave][self._coluna_ativa]
                 campo.setFocus()
                 campo.selectAll()
                 return
 
     def obter_dados_validados(self):
-        """Sem campo obrigatório: sempre retorna as medidas preenchidas até agora."""
-        return {
-            f"medida_{chave}": _texto_para_numero(campo.text())
-            for chave, campo in self._campos.items()
-        }
+        """Sem campo obrigatório: sempre retorna as avaliações preenchidas
+        até agora -- uma lista por medida, uma posição por avaliação/coluna
+        (mesmo formato já usado pela Etapa 7 para dobras/peso/composição).
+        """
+
+        def extrair_numeros(chave):
+            return [
+                _texto_para_numero(campo.text())
+                for campo in self._campos_circunferencias[chave]
+            ]
+
+        def extrair_datas():
+            return [_valor_data(campo) for campo in self._campos_circunferencias["datas"]]
+
+        circunferencias = {"datas": extrair_datas()}
+        for chave, _rotulo, tipo, _maximo in _LINHAS_CIRCUNFERENCIAS:
+            if tipo == "numero":
+                circunferencias[chave] = extrair_numeros(chave)
+
+        return {"circunferencias": circunferencias}
 
     def limpar(self) -> None:
-        for campo in self._campos.values():
-            campo.clear()
+        # Volta ao estado inicial de 1 coluna -- sem isto, um novo cadastro
+        # herdaria as colunas extras que o personal tivesse criado no
+        # cadastro anterior.
+        _remover_colunas_extras_tabela(self._tabela_circunferencias, self._campos_circunferencias)
+        self._num_colunas = _NUM_COLUNAS_INICIAL
+        self._coluna_ativa = 0
+        for widgets in self._campos_circunferencias.values():
+            for widget in widgets:
+                _limpar_widget(widget)
+        self._recalcular_destaques()
 
 
 # -- Etapa 7: Composição corporal -----------------------------------------
@@ -1799,9 +1787,8 @@ _CAMINHO_IMAGEM_MUSCULO_GORDURA = str(
     Path(__file__).resolve().parent.parent.parent / "musculogordura.png"
 )
 
-# Teto genérico para as dobras/circunferências (cm) -- mesmo limite já usado
-# pelo QDoubleValidator da Etapa 6 (_LinhaMedida), reaproveitado aqui para
-# manter o mesmo critério em ambas as etapas.
+# Teto genérico para as circunferências (cm) -- mesmo limite já usado pelo
+# QDoubleValidator da versão anterior desta tabela, reaproveitado aqui.
 _LIMITE_MEDIDA = 300.0
 
 # (chave, rótulo exibido na linha da tabela, tipo de célula, teto numérico).
@@ -1809,15 +1796,17 @@ _LIMITE_MEDIDA = 300.0
 # aceita vírgula ou ponto) | "resultado" (QLabel calculado, somente leitura).
 # "datas" é sempre a primeira linha de cada tabela.
 #
-# IMPORTANTE: apesar do nome da variável (histórico -- essas linhas nunca
-# foram dobras cutâneas de verdade, e sim CIRCUNFERÊNCIAS reavaliadas ao
-# longo do acompanhamento), o card exibido na tela chama-se hoje
-# "Circunferências (Reavaliação)" (ver `bloco_circunferencias` em
-# `ComposicaoCorporalStep`) -- as dobras cutâneas REAIS (mm) usadas no
-# cálculo de composição corporal (protocolo de Jackson & Pollock de 7
-# dobras) são uma tabela própria, separada, ver `_LINHAS_DOBRAS_REAIS`
-# abaixo. Nenhuma medida daqui entra nesse cálculo.
-_LINHAS_CIRCUNFERENCIAS_REAVALIACAO = [
+# Tabela ÚNICA de circunferências da Etapa 6 (`AvaliacaoFisicaStep`), com
+# avaliações dinâmicas (uma coluna por avaliação, criada sob demanda pelo
+# botão "+"). Mesmas 15 medidas que antes viviam em dois cards estáticos de
+# campo único (Circunferência Parte Superior/Inferior + Braços) -- chaves e
+# rótulos preservados (ver `_REGIAO_POR_CHAVE`, que o boneco anatômico
+# interativo também usa para destacar regiões preenchidas). NÃO confundir
+# com as dobras cutâneas REAIS (mm) usadas no cálculo de composição
+# corporal (protocolo de Jackson & Pollock de 7 dobras, Etapa 7) -- essas
+# são uma tabela própria e independente, ver `_LINHAS_DOBRAS_REAIS` abaixo.
+# Nenhuma medida daqui entra nesse cálculo.
+_LINHAS_CIRCUNFERENCIAS = [
     ("datas", "Datas:", "data", None),
     ("ombro", "Ombro", "numero", _LIMITE_MEDIDA),
     ("torax", "Tórax", "numero", _LIMITE_MEDIDA),
@@ -1828,6 +1817,12 @@ _LINHAS_CIRCUNFERENCIAS_REAVALIACAO = [
     ("braco_e_contraido", "Braço (E) Contraído", "numero", _LIMITE_MEDIDA),
     ("braco_d", "Braço (D)", "numero", _LIMITE_MEDIDA),
     ("braco_d_contraido", "Braço (D) Contraído", "numero", _LIMITE_MEDIDA),
+    ("antebraco_e", "Antebraço (E)", "numero", _LIMITE_MEDIDA),
+    ("antebraco_d", "Antebraço (D)", "numero", _LIMITE_MEDIDA),
+    ("coxa_e", "Coxa E", "numero", _LIMITE_MEDIDA),
+    ("coxa_d", "Coxa D", "numero", _LIMITE_MEDIDA),
+    ("panturrilha_e", "Panturrilha E", "numero", _LIMITE_MEDIDA),
+    ("panturrilha_d", "Panturrilha D", "numero", _LIMITE_MEDIDA),
 ]
 
 # Teto plausível para uma dobra cutânea isolada, em milímetros -- generoso o
@@ -1859,14 +1854,26 @@ _LINHAS_DOBRAS_REAIS = [
 _CHAVES_DOBRAS_7 = tuple(chave for chave, _rotulo, _tipo, _maximo in _LINHAS_DOBRAS_REAIS)
 _ROTULOS_DOBRAS_7 = {chave: rotulo for chave, rotulo, _tipo, _maximo in _LINHAS_DOBRAS_REAIS}
 
+# Linhas de fato exibidas na tabela "Dobras Cutâneas (mm)" da Etapa 7: a
+# própria linha "Datas:" (tipo "data", editável) na frente das 7 dobras.
+# Diferente de antes -- quando essa data só espelhava a já digitada na
+# extinta tabela "Circunferências (Reavaliação)", removida desta etapa --,
+# agora cada avaliação da Etapa 7 tem sua PRÓPRIA data, independente da
+# Etapa 6 (as duas etapas nunca copiam valores uma para a outra). Usada só
+# para MONTAR a tabela (`_criar_tabela_widgets`/`_adicionar_coluna_tabela`)
+# -- `_CHAVES_DOBRAS_7` acima continua definida só a partir das 7 dobras
+# reais, sem "datas", então o cálculo JP7 nunca tenta somar uma data como
+# se fosse uma dobra.
+_LINHAS_DOBRAS_COM_DATA = [("datas", "Datas:", "data", None)] + list(_LINHAS_DOBRAS_REAIS)
+
 _LINHAS_PESO = [
     ("peso", "Peso (kg)", "numero", _LIMITE_MEDIDA),
 ]
-# "datas" aqui é "resultado" (não "data" como na tabela de Circunferências
-# acima) de propósito: a data de cada reavaliação já é digitada uma única
-# vez, na tabela de Circunferências -- esta apenas espelha a mesma data em
-# cada coluna (ver `_recalcular_composicao`), sem virar uma segunda fonte
-# de verdade que o personal precisaria preencher (e manter sincronizada) de
+# "datas" aqui é "resultado" (não "data" editável) de propósito: a data de
+# cada avaliação já é digitada uma única vez, na tabela de Dobras Cutâneas
+# (`_LINHAS_DOBRAS_COM_DATA`) -- esta apenas espelha a mesma data em cada
+# coluna (ver `_recalcular_composicao`), sem virar uma segunda fonte de
+# verdade que o personal precisaria preencher (e manter sincronizada) de
 # novo aqui.
 #
 # Linhas e ORDEM reproduzem exatamente a seção "Composição Corporal" da
@@ -2007,17 +2014,12 @@ def _criar_campo_numerico(maximo: float, *, casas_decimais: int = 1) -> QLineEdi
     return campo
 
 
-_RAZOES_FOCO_INTERATIVO = (
-    Qt.MouseFocusReason,
-    Qt.TabFocusReason,
-    Qt.BacktabFocusReason,
-)
-
-
 class _CampoDataMascarada(QDateEdit):
     """QDateEdit com a digitação corrigida -- em tudo mais (calendário
     popup, `.date()`, `.dateChanged`, o valor interno sempre um `QDate` de
-    verdade, a validação de dia/mês/ano/ano bissexto) é o `QDateEdit`
+    verdade, a validação de dia/mês/ano/ano bissexto -- datas impossíveis
+    como 31/02 ou mês 13 são corrigidas automaticamente pelo próprio Qt
+    conforme o personal digita, nunca ficam armazenadas) é o `QDateEdit`
     nativo do Qt, sem reimplementar nada disso. Dois bugs foram isolados e
     corrigidos (reproduzem com qualquer QDateEdit, não são específicos
     deste projeto):
@@ -2028,10 +2030,19 @@ class _CampoDataMascarada(QDateEdit):
        um campo vazio), a digitação inteira quebra -- a primeira tecla não
        é registrada e a data nunca sai do valor mínimo. Corrigido em
        `focusInEvent`/`focusOutEvent`: o texto especial só fica ligado
-       enquanto o campo não está sendo editado -- some assim que o
-       personal clica ou chega via Tab (`_RAZOES_FOCO_INTERATIVO`, nunca
-       num foco automático/programático, pra não piscar uma data falsa
-       "01/01/2000" à toa) e volta ao perder o foco sem nada digitado.
+       enquanto o campo não está sendo editado -- some assim que o campo
+       recebe foco, de QUALQUER forma (clique, Tab, ou a janela/etapa
+       simplesmente aparecer com este campo já sendo o foco atual --
+       `Qt.ActiveWindowFocusReason`) e volta ao perder o foco sem nada
+       digitado. Uma versão anterior restringia essa limpeza a só alguns
+       motivos de foco (clique/Tab), excluindo justamente
+       `ActiveWindowFocusReason` -- exatamente o motivo que o Qt usa
+       quando este campo já é o foco corrente no momento em que a janela
+       fica ativa (ex.: primeira vez que uma etapa com "Datas:" aparece).
+       Sem tratar esse caso, o personal via a digitação quebrar bem no
+       campo que mais precisa funcionar de primeira, obrigando-o a usar
+       clique/scroll manual em cada seção -- daí não restringir mais por
+       motivo algum.
 
     2) Apagar uma seção (dia/mês/ano) até ficar vazia com Backspace/Delete
        deixa essa seção "suja": a primeira tecla digitada ali depois some
@@ -2046,9 +2057,8 @@ class _CampoDataMascarada(QDateEdit):
     """
 
     def focusInEvent(self, evento) -> None:
-        if evento.reason() in _RAZOES_FOCO_INTERATIVO:
-            self.setSpecialValueText("")
-            self.setSelectedSection(QDateEdit.DaySection)
+        self.setSpecialValueText("")
+        self.setSelectedSection(QDateEdit.DaySection)
         super().focusInEvent(evento)
 
     def focusOutEvent(self, evento) -> None:
@@ -2257,15 +2267,15 @@ def _criar_card_tabela(
     titulo: str, *widgets: QWidget, widget_extra_cabecalho: Optional[QWidget] = None
 ) -> QFrame:
     """Cartão com faixa azul (título centralizado) + conteúdo empilhado --
-    mesmo padrão visual de `_criar_bloco_medidas`, adaptado para empacotar
-    as tabelas desta etapa em vez de linhas de medida avulsas.
+    empacota uma ou mais tabelas de avaliação (widgets QTableWidget) sob um
+    único cabeçalho.
 
-    `widget_extra_cabecalho` é opcional e só usado pelo card de
-    Circunferências (Reavaliação) da Etapa 7, pro botão "+" de nova
-    avaliação (especificação, seção 2) -- fica alinhado à direita do
-    cabeçalho, sem deslocar o título (que continua centralizado). Quem não
-    passa esse argumento tem o cabeçalho EXATAMENTE igual a antes
-    (`_cabecalho_bloco_medidas` sem alterações).
+    `widget_extra_cabecalho` é opcional -- usado pelo botão "+" de nova
+    avaliação dos cards de Circunferências (Etapa 6) e Dobras Cutâneas
+    (Etapa 7): fica alinhado à direita do cabeçalho, sem deslocar o título
+    (que continua centralizado). Quem não passa esse argumento tem o
+    cabeçalho EXATAMENTE igual a antes (`_cabecalho_bloco_medidas` sem
+    alterações).
     """
     cartao = _criar_cartao()
     layout = QVBoxLayout(cartao)
@@ -2395,10 +2405,11 @@ def _calcular_composicao_jp7(
 
     `dobras` é um dict chave (ver `_CHAVES_DOBRAS_7`) -> valor em mm. Retorna
     None se faltar sexo, idade, peso OU qualquer uma das 7 dobras, ou se o
-    sexo não tiver equação JP7 definida (só Masculino/Feminino -- "Outro" e
-    "Prefiro não informar", opções válidas na Etapa 1, não têm coeficientes
-    clínicos publicados). Nunca calcula parcialmente nem assume 0 para dado
-    ausente.
+    sexo não tiver equação JP7 definida (só Masculino/Feminino têm
+    coeficientes clínicos publicados -- um cadastro antigo com "Outro" ou
+    "Prefiro não informar", opções hoje removidas da Etapa 1, ver
+    SEXO_OPCOES, cai nesse caso). Nunca calcula parcialmente nem assume 0
+    para dado ausente.
 
     O percentual de gordura (Siri) pode sair negativo num caso-limite --
     isso é esperado da fórmula, não um erro de entrada (mesmo caso-limite
@@ -2442,18 +2453,20 @@ def _calcular_composicao_jp7(
 
 
 class ComposicaoCorporalStep(QWidget):
-    """Etapa 7 do cadastro: circunferências, dobras cutâneas, peso e
-    composição corporal.
+    """Etapa 7 do cadastro: dobras cutâneas, peso e composição corporal.
 
-    Vem logo depois da Avaliação Física (Etapa 6). A imagem músculo x
-    gordura é a mesma nos dois casos, mas o CÁLCULO da composição corporal
-    depende do sexo e da idade do aluno (protocolo de Jackson & Pollock de 7
-    dobras, ver `_calcular_composicao_jp7`) -- por isso, assim como a Etapa
-    6, esta etapa usa `ao_entrar` para ler esses dois dados já cadastrados
-    na Etapa 1. A altura NÃO entra neste cálculo (a planilha de referência
+    Vem logo depois da Avaliação Física (Etapa 6, que cuida só das
+    circunferências -- as duas etapas são independentes: nenhuma copia
+    valores para a outra). A imagem músculo x gordura é a mesma nos dois
+    casos, mas o CÁLCULO da composição corporal depende do sexo e da idade
+    do aluno (protocolo de Jackson & Pollock de 7 dobras, ver
+    `_calcular_composicao_jp7`) -- por isso, assim como a Etapa 6, esta
+    etapa usa `ao_entrar` para ler esses dois dados já cadastrados na
+    Etapa 1. A altura NÃO entra neste cálculo (a planilha de referência
     também não usa altura na Composição Corporal, só no IMC, calculado à
     parte) -- continua cadastrada normalmente na Etapa 1, só não é lida
-    aqui.
+    aqui. Circunferências também não entram neste cálculo (só as 7 dobras
+    cutâneas, o peso e a idade/sexo).
     """
 
     def __init__(self, parent=None):
@@ -2542,16 +2555,23 @@ class ComposicaoCorporalStep(QWidget):
         self._label_erro.hide()
         coluna_esquerda.addWidget(self._label_erro)
 
-        self._tabela_circunferencias, self._campos_circunferencias = _criar_tabela_widgets(
-            _LINHAS_CIRCUNFERENCIAS_REAVALIACAO
+        # Dobras cutâneas de verdade (mm) -- únicas medidas usadas no
+        # cálculo de composição corporal (protocolo JP7, ver
+        # `_calcular_composicao_jp7`), com sua PRÓPRIA linha de "Datas:" na
+        # frente (`_LINHAS_DOBRAS_COM_DATA`): esta etapa não tem mais uma
+        # tabela de circunferências para espelhar a data dali (removida --
+        # circunferências pertencem só à Etapa 6), então cada avaliação
+        # daqui precisa da sua própria data, independente.
+        self._tabela_dobras_reais, self._campos_dobras_reais = _criar_tabela_widgets(
+            _LINHAS_DOBRAS_COM_DATA
         )
 
-        # Botão "+" -- único da Etapa 7 (especificação, seção 14): um clique
-        # cria a coluna nova, sincronizada, nas 4 seções de uma vez
-        # (`_adicionar_nova_avaliacao`), nunca um botão por seção. Fica no
-        # cabeçalho do card de Circunferências -- primeiro card da etapa,
-        # o mesmo que começa com a linha "Datas:" (especificação, seção 2).
-        # Compacto (28x28, só o "+") pra não ocupar espaço à toa.
+        # Botão "+" -- único mecanismo desta etapa para criar uma nova
+        # avaliação: um clique cria a coluna nova, sincronizada, nas 3
+        # seções restantes de uma vez (`_adicionar_nova_avaliacao`), nunca
+        # um botão por seção. Fica no cabeçalho do card de Dobras Cutâneas
+        # -- primeiro card da etapa, o mesmo que começa com a linha
+        # "Datas:". Compacto (28x28, só o "+") pra não ocupar espaço à toa.
         self._botao_nova_avaliacao = QPushButton("+")
         self._botao_nova_avaliacao.setCursor(Qt.PointingHandCursor)
         self._botao_nova_avaliacao.setFixedSize(28, 28)
@@ -2572,22 +2592,6 @@ class ComposicaoCorporalStep(QWidget):
         )
         self._botao_nova_avaliacao.clicked.connect(self._adicionar_nova_avaliacao)
 
-        bloco_circunferencias = _criar_card_tabela(
-            "Circunferências (Reavaliação)",
-            self._tabela_circunferencias,
-            widget_extra_cabecalho=self._botao_nova_avaliacao,
-        )
-        coluna_esquerda.addWidget(bloco_circunferencias)
-
-        # Dobras cutâneas de verdade (mm) -- únicas medidas usadas no
-        # cálculo de composição corporal (protocolo JP7, ver
-        # `_calcular_composicao_jp7`). Tabela própria, separada das
-        # circunferências acima, sem linha de "Datas:" própria (mesmo
-        # padrão da tabela de Peso abaixo): a data de cada reavaliação é a
-        # mesma já digitada na tabela de Circunferências.
-        self._tabela_dobras_reais, self._campos_dobras_reais = _criar_tabela_widgets(
-            _LINHAS_DOBRAS_REAIS
-        )
         # Peso fica numa tabela própria (linha separada da lista de dobras),
         # mas com a mesma largura de rótulo -- as colunas de dados de ambas
         # ficam alinhadas mesmo sendo dois QTableWidget diferentes.
@@ -2598,7 +2602,11 @@ class ComposicaoCorporalStep(QWidget):
         divisor_peso.setStyleSheet(f"background-color: {Cores.BORDA};")
 
         bloco_dobras = _criar_card_tabela(
-            "Dobras Cutâneas (mm)", self._tabela_dobras_reais, divisor_peso, self._tabela_peso
+            "Dobras Cutâneas (mm)",
+            self._tabela_dobras_reais,
+            divisor_peso,
+            self._tabela_peso,
+            widget_extra_cabecalho=self._botao_nova_avaliacao,
         )
         coluna_esquerda.addWidget(bloco_dobras)
 
@@ -2610,13 +2618,11 @@ class ComposicaoCorporalStep(QWidget):
 
         coluna_esquerda.addStretch(1)
 
-        # As 4 tabelas desta etapa têm sempre o mesmo número de colunas,
+        # As 3 tabelas desta etapa têm sempre o mesmo número de colunas,
         # criadas em sincronia (`_adicionar_nova_avaliacao`) -- por isso dá
-        # pra manter o scroll horizontal das 4 alinhado (especificação,
-        # seção 4: "manter alinhamento vertical entre todas essas seções"
-        # mesmo rolando pra ver colunas mais à direita).
+        # pra manter o scroll horizontal das 3 alinhado mesmo rolando pra
+        # ver colunas mais à direita.
         self._tabelas_reavaliacao = (
-            self._tabela_circunferencias,
             self._tabela_dobras_reais,
             self._tabela_peso,
             self._tabela_composicao,
@@ -2627,25 +2633,24 @@ class ComposicaoCorporalStep(QWidget):
             )
 
         # Data / Densidade / % Gordura / Massa Gorda / Massa Magra são
-        # sempre recalculados a partir da Data (Circunferências), do Peso e
-        # das 7 Dobras da MESMA coluna (mesma reavaliação) -- qualquer
-        # mudança num desses campos já atualiza os resultados na hora, sem
-        # precisar de um botão "calcular" separado. Mesma conexão usada
-        # tanto na coluna inicial (aqui) quanto em cada coluna nova
+        # sempre recalculados a partir da Data, do Peso e das 7 Dobras da
+        # MESMA coluna (mesma avaliação) -- qualquer mudança num desses
+        # campos já atualiza os resultados na hora, sem precisar de um
+        # botão "calcular" separado. Mesma conexão usada tanto na coluna
+        # inicial (aqui) quanto em cada coluna nova
         # (`_adicionar_nova_avaliacao`) -- ver `_conectar_coluna_calculo`.
         coluna_inicial = _NUM_COLUNAS_INICIAL - 1  # sempre 0 -- só por clareza
         self._conectar_coluna_calculo(
-            [(chave, self._campos_circunferencias[chave][coluna_inicial])
-             for chave, _r, _t, _m in _LINHAS_CIRCUNFERENCIAS_REAVALIACAO],
+            [(chave, self._campos_dobras_reais[chave][coluna_inicial])
+             for chave, _r, _t, _m in _LINHAS_DOBRAS_COM_DATA],
             [(chave, self._campos_peso[chave][coluna_inicial]) for chave, _r, _t, _m in _LINHAS_PESO],
-            [(chave, self._campos_dobras_reais[chave][coluna_inicial]) for chave in _CHAVES_DOBRAS_7],
         )
 
         # Campo obrigatório (ver `obter_dados_validados`): corrigir o valor
         # já limpa o erro daquele campo específico e esconde a mensagem
         # geral, em vez de deixá-la presa na tela mesmo após corrigido.
         self._campos_peso["peso"][0].textChanged.connect(self._limpar_erro_validacao)
-        self._campos_circunferencias["datas"][0].dateChanged.connect(self._limpar_erro_validacao)
+        self._campos_dobras_reais["datas"][0].dateChanged.connect(self._limpar_erro_validacao)
 
         self._recalcular_composicao()
 
@@ -2683,25 +2688,23 @@ class ComposicaoCorporalStep(QWidget):
 
     # -- Reavaliações dinâmicas: coluna nova sincronizada -----------------
 
-    def _conectar_coluna_calculo(self, widgets_circ, widgets_peso, widgets_dobras) -> None:
-        """Liga os sinais de UMA coluna (circunferências/peso/dobras) ao
-        recálculo automático da composição corporal -- usada tanto pela
-        coluna inicial (`__init__`) quanto por cada coluna nova
+    def _conectar_coluna_calculo(self, widgets_dobras, widgets_peso) -> None:
+        """Liga os sinais de UMA coluna (dobras+data/peso) ao recálculo
+        automático da composição corporal -- usada tanto pela coluna
+        inicial (`__init__`) quanto por cada coluna nova
         (`_adicionar_nova_avaliacao`), sempre a mesma lógica. Cada
         argumento é uma lista `[(chave, widget), ...]` da MESMA coluna
         (mesmo formato devolvido por `_adicionar_coluna_tabela`).
 
-        Só a data (dentro de `widgets_circ`) recalcula -- as demais
-        circunferências (ombro, tórax, ...) não entram no cálculo de
-        composição corporal (especificação, seção 7) e por isso nunca
-        precisam recalcular nada ao mudar.
+        Dentro de `widgets_dobras`, a data usa `dateChanged` (é um
+        QDateEdit); as 7 dobras usam `textChanged` como o peso.
         """
-        for chave, widget in widgets_circ:
+        for chave, widget in widgets_dobras:
             if chave == "datas":
                 widget.dateChanged.connect(self._recalcular_composicao)
+            else:
+                widget.textChanged.connect(self._recalcular_composicao)
         for _chave, widget in widgets_peso:
-            widget.textChanged.connect(self._recalcular_composicao)
-        for _chave, widget in widgets_dobras:
             widget.textChanged.connect(self._recalcular_composicao)
 
     def _sincronizar_scroll_horizontal(self, origem: QTableWidget, valor: int) -> None:
@@ -2719,42 +2722,37 @@ class ComposicaoCorporalStep(QWidget):
                 barra.blockSignals(False)
 
     def _adicionar_nova_avaliacao(self) -> None:
-        """Botão "+": cria uma coluna nova, sincronizada, nas 4 seções da
-        Etapa 7 de uma vez só (especificação, seções 2, 4 e 5) -- nunca uma
-        coluna "solta" só numa seção, e a Composição corporal SEMPRE recebe
-        a coluna nova automaticamente, sem ação extra do personal. Os dados
-        das colunas já existentes não são tocados (especificação, seção 6).
+        """Botão "+": cria uma coluna nova, sincronizada, nas 3 seções da
+        Etapa 7 de uma vez só -- nunca uma coluna "solta" só numa seção, e
+        a Composição corporal SEMPRE recebe a coluna nova automaticamente,
+        sem ação extra do personal. Os dados das colunas já existentes não
+        são tocados.
         """
-        novos_circ = _adicionar_coluna_tabela(
-            self._tabela_circunferencias,
-            self._campos_circunferencias,
-            _LINHAS_CIRCUNFERENCIAS_REAVALIACAO,
-        )
         novos_dobras = _adicionar_coluna_tabela(
-            self._tabela_dobras_reais, self._campos_dobras_reais, _LINHAS_DOBRAS_REAIS
+            self._tabela_dobras_reais, self._campos_dobras_reais, _LINHAS_DOBRAS_COM_DATA
         )
         novos_peso = _adicionar_coluna_tabela(self._tabela_peso, self._campos_peso, _LINHAS_PESO)
         # Composição corporal é só resultado (QLabel, sem sinal próprio) --
         # ainda assim precisa da coluna nova AQUI, no mesmo clique, pra
         # `_recalcular_composicao` abaixo ter onde escrever o resultado
-        # dessa reavaliação (especificação, seção 5).
+        # dessa avaliação.
         _adicionar_coluna_tabela(
             self._tabela_composicao, self._campos_composicao, _LINHAS_COMPOSICAO_CORPORAL
         )
-        self._conectar_coluna_calculo(novos_circ, novos_peso, novos_dobras)
+        self._conectar_coluna_calculo(novos_dobras, novos_peso)
 
         self._num_colunas += 1
         self._recalcular_composicao()
 
-        # Rola até a coluna recém-criada (nas 4 tabelas, via
+        # Rola até a coluna recém-criada (nas 3 tabelas, via
         # `_sincronizar_scroll_horizontal`) -- sem isto, com muitas colunas
         # já existentes, a nova nasceria fora da área visível.
-        barra = self._tabela_circunferencias.horizontalScrollBar()
+        barra = self._tabela_dobras_reais.horizontalScrollBar()
         barra.setValue(barra.maximum())
 
     # -- Composição corporal: cálculo automático -------------------------
     def _recalcular_composicao(self) -> None:
-        campos_datas = self._campos_circunferencias["datas"]
+        campos_datas = self._campos_dobras_reais["datas"]
         campos_peso = self._campos_peso["peso"]
         labels_data = self._campos_composicao["datas"]
         labels_magra = self._campos_composicao["massa_magra"]
@@ -2765,7 +2763,7 @@ class ComposicaoCorporalStep(QWidget):
 
         for coluna in range(self._num_colunas):
             # A data não é digitada de novo aqui -- só espelha a da tabela
-            # de Circunferências daquela mesma coluna (ver comentário em
+            # de Dobras Cutâneas daquela mesma coluna (ver comentário em
             # `_LINHAS_COMPOSICAO_CORPORAL`), sempre no formato dd/MM/aaaa.
             data = _valor_data(campos_datas[coluna])
             labels_data[coluna].setText(data if data else "—")
@@ -2783,9 +2781,10 @@ class ComposicaoCorporalStep(QWidget):
             if not self._sexo:
                 faltando.append("o sexo (Etapa 1)")
             elif self._sexo not in _CONSTANTES_JP7:
-                # Sexo preenchido (passa na validação da Etapa 1, que aceita
-                # "Outro"/"Prefiro não informar" -- ver SEXO_OPCOES), mas o
-                # protocolo JP7 só tem coeficientes para Masculino/Feminino.
+                # Sexo preenchido, mas com um valor fora de Masculino/Feminino
+                # (só possível em cadastro antigo -- a Etapa 1 atual só
+                # oferece essas duas opções, ver SEXO_OPCOES). O protocolo
+                # JP7 só tem coeficientes para Masculino/Feminino.
                 faltando.append(
                     f'um sexo Masculino ou Feminino na Etapa 1 (o protocolo de '
                     f'Jackson & Pollock não é definido para "{self._sexo}")'
@@ -2841,7 +2840,7 @@ class ComposicaoCorporalStep(QWidget):
 
     def _limpar_erro_validacao(self) -> None:
         self._label_erro.hide()
-        _marcar_campo_erro(self._campos_circunferencias["datas"][0], com_erro=False)
+        _marcar_campo_erro(self._campos_dobras_reais["datas"][0], com_erro=False)
         _marcar_campo_erro(self._campos_peso["peso"][0], com_erro=False)
 
     def _mostrar_erro_validacao(self, mensagem: str, campo: QWidget) -> None:
@@ -2851,17 +2850,17 @@ class ComposicaoCorporalStep(QWidget):
         campo.setFocus()
 
     def obter_dados_validados(self):
-        """Exige data e peso da primeira reavaliação (coluna 0) -- sem eles
+        """Exige data e peso da primeira avaliação (coluna 0) -- sem eles
         não há um registro de composição corporal utilizável. As demais
-        medidas (circunferências, dobras cutâneas) e as colunas de
-        reavaliações futuras continuam opcionais (mesmo espírito "sem
-        preenchimento obrigatório" da Etapa 6): o personal pode completá-las
-        ao longo do acompanhamento, em visitas seguintes -- só não recebem
-        um resultado de composição corporal calculado enquanto isso.
+        medidas (dobras cutâneas) e as colunas de avaliações futuras
+        continuam opcionais (mesmo espírito "sem preenchimento
+        obrigatório" da Etapa 6): o personal pode completá-las ao longo do
+        acompanhamento, em visitas seguintes -- só não recebem um
+        resultado de composição corporal calculado enquanto isso.
         """
         self._limpar_erro_validacao()
 
-        campo_data = self._campos_circunferencias["datas"][0]
+        campo_data = self._campos_dobras_reais["datas"][0]
         if campo_data.date() == _DATA_SENTINELA:
             self._mostrar_erro_validacao("Informe uma data válida.", campo_data)
             return None
@@ -2877,14 +2876,9 @@ class ComposicaoCorporalStep(QWidget):
         def extrair_datas(matriz):
             return [_valor_data(w) for w in matriz["datas"]]
 
-        circunferencias = {"datas": extrair_datas(self._campos_circunferencias)}
-        for chave, _rotulo, tipo, _maximo in _LINHAS_CIRCUNFERENCIAS_REAVALIACAO:
-            if tipo == "numero":
-                circunferencias[chave] = extrair_numeros(self._campos_circunferencias, chave)
-
-        dobras_cutaneas = {
-            chave: extrair_numeros(self._campos_dobras_reais, chave) for chave in _CHAVES_DOBRAS_7
-        }
+        dobras_cutaneas = {"datas": extrair_datas(self._campos_dobras_reais)}
+        for chave in _CHAVES_DOBRAS_7:
+            dobras_cutaneas[chave] = extrair_numeros(self._campos_dobras_reais, chave)
 
         peso = extrair_numeros(self._campos_peso, "peso")
         # Resultados agora são colunas calculadas ("resultado"), não mais
@@ -2923,14 +2917,14 @@ class ComposicaoCorporalStep(QWidget):
                 densidade_corporal.append(round(resultado["densidade"], 4))
 
         composicao_corporal = {
-            # Mesma data da tabela de Circunferências (ver comentário em
+            # Mesma data da tabela de Dobras Cutâneas (ver comentário em
             # `_LINHAS_COMPOSICAO_CORPORAL`) -- não é lida de novo daqui, é
             # o mesmo dado, só espelhado. Estrutura (chaves e ordem) igual à
             # seção "Composição Corporal" da planilha de referência -- sem
             # "peso_corporal"/"soma_dobras": a planilha não tem essas linhas
             # aqui (peso já tem sua própria linha/chave, ver "peso" no
             # dict retornado abaixo; soma é só conta interna da densidade).
-            "datas": circunferencias["datas"],
+            "datas": dobras_cutaneas["datas"],
             "massa_magra": massa_magra,
             "massa_gorda": massa_gorda,
             "percentual_gordura": percentual_gordura,
@@ -2939,20 +2933,18 @@ class ComposicaoCorporalStep(QWidget):
         }
 
         return {
-            "circunferencias": circunferencias,
             "dobras_cutaneas": dobras_cutaneas,
             "peso": peso,
             "composicao_corporal": composicao_corporal,
         }
 
     def limpar(self) -> None:
-        # Volta ao estado inicial de 1 coluna (especificação, seção 1) --
-        # sem isto, um novo cadastro herdaria as colunas extras que o
-        # personal tivesse criado no cadastro anterior.
+        # Volta ao estado inicial de 1 coluna -- sem isto, um novo cadastro
+        # herdaria as colunas extras que o personal tivesse criado no
+        # cadastro anterior.
         for tabela, matriz in zip(
             self._tabelas_reavaliacao,
             (
-                self._campos_circunferencias,
                 self._campos_dobras_reais,
                 self._campos_peso,
                 self._campos_composicao,
@@ -2962,7 +2954,6 @@ class ComposicaoCorporalStep(QWidget):
         self._num_colunas = _NUM_COLUNAS_INICIAL
 
         for matriz in (
-            self._campos_circunferencias,
             self._campos_dobras_reais,
             self._campos_peso,
             self._campos_composicao,
@@ -2971,6 +2962,334 @@ class ComposicaoCorporalStep(QWidget):
                 for widget in widgets:
                     _limpar_widget(widget)
         self._limpar_erro_validacao()
+
+
+# -- Etapa 8: Registro de imagens -----------------------------------------
+
+# (chave salva/lida em `_dados_coletados` e na coluna do banco, título
+# exibido no card) -- ordem de exibição na grade 2x2, igual ao modelo da
+# especificação (frente/costas na primeira linha, lados na segunda).
+_SLOTS_FOTOS = [
+    ("foto_frente", "Imagem de frente"),
+    ("foto_costas", "Imagem de costa"),
+    ("foto_lado_direito", "Imagem do lado direito"),
+    ("foto_lado_esquerdo", "Imagem do lado esquerdo"),
+]
+
+_FILTRO_ARQUIVOS_IMAGEM = "Imagens (*.png *.jpg *.jpeg *.webp)"
+
+
+class _AreaFotoClicavel(QLabel):
+    """Área de foto de um card da Etapa 8: mostra "+" centralizado enquanto
+    vazia, ou a foto já escolhida (redimensionada mantendo a proporção
+    original, sem deformar -- mesma técnica de `_ImagemProporcional`, via
+    QPixmap.scaled a cada resize). Clicar emite `clicada` tanto vazia quanto
+    já preenchida -- é o que permite substituir uma foto sem criar um
+    segundo card (especificação, seção 7).
+    """
+
+    clicada = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._caminho: Optional[str] = None
+        self._pixmap_original: Optional[QPixmap] = None
+        self.setAlignment(Qt.AlignCenter)
+        self.setCursor(Qt.PointingHandCursor)
+        # Mínimo baixo de propósito: quem manda no tamanho é o card pai
+        # (`_CardFotoAluno`/`_GradeFotos`, formato retangular vertical) --
+        # um mínimo maior aqui competiria com aquele tamanho fixo na janela
+        # pequena e voltaria a achatar o card para um formato mais quadrado.
+        self.setMinimumSize(60, 80)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._atualizar_conteudo()
+
+    @property
+    def caminho_imagem(self) -> Optional[str]:
+        return self._caminho
+
+    def definir_imagem(self, caminho: Optional[str]) -> None:
+        if not caminho:
+            self._caminho = None
+            self._pixmap_original = None
+            self._atualizar_conteudo()
+            return
+
+        pixmap = QPixmap(caminho)
+        if pixmap.isNull():
+            # Arquivo inválido/corrompido -- mantém a foto anterior (se
+            # havia) em vez de trocar por um card vazio sem avisar.
+            return
+        self._caminho = caminho
+        self._pixmap_original = pixmap
+        self._atualizar_conteudo()
+
+    def resizeEvent(self, evento) -> None:
+        super().resizeEvent(evento)
+        self._atualizar_conteudo()
+
+    def mousePressEvent(self, evento) -> None:
+        super().mousePressEvent(evento)
+        self.clicada.emit()
+
+    def _atualizar_conteudo(self) -> None:
+        if self._pixmap_original is None:
+            # clear() antes de setText(): setPixmap(QPixmap() nulo) reseta o
+            # texto internamente no QLabel -- setar nessa ordem faria o "+"
+            # sumir de novo assim que este método é chamado de novo (ex.: no
+            # primeiro resizeEvent dispersado pelo próprio layout).
+            self.clear()
+            self.setText("+")
+            self.setStyleSheet(
+                f"""
+                QLabel {{
+                    background-color: {Cores.SUPERFICIE};
+                    border: 1px dashed {Cores.BORDA};
+                    border-radius: 10px;
+                    color: {Cores.TEXTO_SECUNDARIO};
+                    font-size: 34px;
+                    font-weight: 300;
+                }}
+                """
+            )
+        else:
+            self.setText("")
+            self.setPixmap(
+                self._pixmap_original.scaled(
+                    self.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
+            )
+            self.setStyleSheet(
+                f"""
+                QLabel {{
+                    background-color: {Cores.SUPERFICIE};
+                    border: 1px solid {Cores.BORDA};
+                    border-radius: 10px;
+                }}
+                """
+            )
+
+
+class _CardFotoAluno(QFrame):
+    """Um dos quatro cards da Etapa 8 -- título + `_AreaFotoClicavel`.
+
+    Mesmo padrão visual dos demais cartões internos do cadastro (fundo
+    claro, borda suave, cantos arredondados -- ver `_BotaoObjetivo`), só
+    que sem estado de seleção: aqui o card só existe vazio ou com uma foto.
+    """
+
+    solicitar_imagem = Signal()
+
+    def __init__(self, titulo: str, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(
+            f"""
+            QFrame {{
+                background-color: {Cores.FUNDO};
+                border: 1px solid {Cores.BORDA};
+                border-radius: 12px;
+            }}
+            """
+        )
+
+        layout = QVBoxLayout(self)
+        # Margens/espaçamento internos enxutos -- é o que sobra de área pra
+        # foto de fato (especificação: "a área interna destinada à imagem
+        # também deve ficar maior"), sem cortar o respiro do título.
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        label_titulo = QLabel(titulo)
+        label_titulo.setAlignment(Qt.AlignCenter)
+        label_titulo.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: {Cores.TEXTO_PRIMARIO}; font-size: {Fontes.TAMANHO_LABEL}px; font-weight: 600;"
+        )
+        layout.addWidget(label_titulo)
+
+        self._area = _AreaFotoClicavel()
+        self._area.clicada.connect(self.solicitar_imagem.emit)
+        layout.addWidget(self._area, stretch=1)
+
+    @property
+    def caminho_imagem(self) -> Optional[str]:
+        return self._area.caminho_imagem
+
+    def definir_imagem(self, caminho: Optional[str]) -> None:
+        self._area.definir_imagem(caminho)
+
+
+# Retângulo VERTICAL (mais alto que largo, como uma foto de corpo inteiro)
+# -- largura:altura ≈ 4:5 (um pouco mais "cheio" que o 3:4 original: mesma
+# altura disponível rende um card perceptivelmente maior sem parecer
+# quadrado). A LARGURA é sempre DERIVADA da altura por essa razão -- nunca
+# um piso independente: um piso de largura à parte (desalinhado da razão)
+# é exatamente o que faria o card ficar quadrado numa janela pequena, onde
+# a altura disponível encolhe mas a largura mínima não acompanharia.
+_RAZAO_LARGURA_ALTURA_CARD_FOTO = 4 / 5
+# Piso puro de segurança (card ínfimo/zero em vez de encolher janela
+# afora) -- bem abaixo do menor valor real já visto na janela mínima do
+# app (960x600, ver `ui_main.py`), então não força os cards a
+# transbordarem do painel numa janela pequena; ele só entraria em ação se
+# o mínimo da janela fosse reduzido bem mais no futuro.
+_ALTURA_MINIMA_CARD_FOTO = 100
+_ALTURA_MAXIMA_CARD_FOTO = 420  # teto de bom senso p/ monitores bem altos
+_ESPACAMENTO_GRADE_FOTOS = 18
+_MARGEM_PAINEL_FOTOS = 20
+
+
+class _PainelFotosAluno(QFrame):
+    """Painel branco com a grade 2x2 dos 4 cards de foto.
+
+    Ao contrário do cartão padrão do cadastro (`_criar_cartao()`, sempre
+    esticado à largura inteira da etapa pelo QVBoxLayout que o contém),
+    este painel ACOMPANHA o tamanho real do conteúdo: sua LARGURA é sempre
+    recalculada a partir da própria ALTURA (livre para crescer/encolher com
+    a janela, via stretch no layout da etapa -- ver `ImagensAlunoStep`) já
+    somando as margens internas, então não sobra faixa de branco vazio nas
+    laterais como no cartão padrão (especificação: "o container deve
+    acompanhar melhor o tamanho real dos quatro cards"). Por isso precisa
+    ser adicionado ao layout da etapa com alinhamento horizontal central
+    (`Qt.AlignHCenter`) -- sem stretch nem alinhamento vertical, então a
+    altura continua livre (fill), só a largura passa a ser a nossa.
+
+    A altura de cada card é sempre metade da altura disponível (dividida
+    pelas 2 linhas da grade) -- ela já usa o espaço vertical inteiro, sem
+    sobra --, e a LARGURA é sempre DERIVADA dela pela razão acima, nunca o
+    contrário (especificação: "não aumentar automaticamente a largura").
+    """
+
+    def __init__(self, cards, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(
+            f"""
+            QFrame {{
+                background-color: {Cores.SUPERFICIE};
+                border: 1px solid {Cores.BORDA};
+                border-radius: 14px;
+            }}
+            """
+        )
+        self._cards = list(cards)
+
+        self._grade = QGridLayout(self)
+        self._grade.setContentsMargins(
+            _MARGEM_PAINEL_FOTOS, _MARGEM_PAINEL_FOTOS,
+            _MARGEM_PAINEL_FOTOS, _MARGEM_PAINEL_FOTOS,
+        )
+        self._grade.setHorizontalSpacing(_ESPACAMENTO_GRADE_FOTOS)
+        self._grade.setVerticalSpacing(_ESPACAMENTO_GRADE_FOTOS)
+        for indice, card in enumerate(self._cards):
+            self._grade.addWidget(card, indice // 2, indice % 2)
+
+        self._recalcular()
+
+    def resizeEvent(self, evento) -> None:
+        super().resizeEvent(evento)
+        self._recalcular()
+
+    def _recalcular(self) -> None:
+        espaco_v = self._grade.verticalSpacing()
+        altura_disponivel = self.height() - 2 * _MARGEM_PAINEL_FOTOS - espaco_v
+        altura_celula = altura_disponivel / 2
+        if altura_celula <= 0:
+            return  # ainda sem geometria real (antes do primeiro layout)
+
+        altura = max(altura_celula, _ALTURA_MINIMA_CARD_FOTO)
+        altura = min(altura, _ALTURA_MAXIMA_CARD_FOTO)
+        largura = altura * _RAZAO_LARGURA_ALTURA_CARD_FOTO
+
+        tamanho = QSize(int(largura), int(altura))
+        for card in self._cards:
+            card.setFixedSize(tamanho)
+
+        # Fecha a própria largura exatamente ao redor dos 2 cards + espaço
+        # entre eles + margens -- nunca mais larga que isso (é o que tira o
+        # vazio nas laterais do painel).
+        espaco_h = self._grade.horizontalSpacing()
+        largura_painel = int(largura) * 2 + espaco_h + 2 * _MARGEM_PAINEL_FOTOS
+        self.setFixedWidth(largura_painel)
+
+
+class ImagensAlunoStep(QWidget):
+    """Etapa 8 (última) do cadastro: as quatro fotos do aluno.
+
+    Sem validação obrigatória -- diferente das etapas anteriores, nenhuma
+    foto é exigida para concluir o cadastro (especificação, seção 12: só
+    os quatro espaços + seleção + exibição + salvamento, nada além disso).
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        layout_raiz = QVBoxLayout(self)
+        layout_raiz.setContentsMargins(0, 0, 0, 0)
+        layout_raiz.setSpacing(18)
+
+        # Cabeçalho — mesmo banner azul das demais etapas de Anamnese, só
+        # muda o subtítulo.
+        cabecalho = QFrame()
+        cabecalho.setStyleSheet(
+            f"background-color: {Cores.AZUL_ESCURO}; border-radius: 14px;"
+        )
+        layout_cabecalho = QVBoxLayout(cabecalho)
+        layout_cabecalho.setContentsMargins(28, 20, 28, 20)
+        layout_cabecalho.setSpacing(4)
+
+        titulo_cabecalho = QLabel("Anamnese")
+        titulo_cabecalho.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: white; font-size: {Fontes.TAMANHO_TITULO}px; font-weight: 700;"
+        )
+        layout_cabecalho.addWidget(titulo_cabecalho)
+
+        subtitulo_cabecalho = QLabel("Etapa 8: Registro de imagens")
+        subtitulo_cabecalho.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: white; font-size: {Fontes.TAMANHO_TEXTO}px; font-weight: 500;"
+        )
+        layout_cabecalho.addWidget(subtitulo_cabecalho)
+
+        layout_raiz.addWidget(cabecalho)
+
+        # Painel com a grade 2x2 dos quatro espaços de foto ------------------
+        self._cards: Dict[str, _CardFotoAluno] = {}
+        for chave, titulo in _SLOTS_FOTOS:
+            card = _CardFotoAluno(titulo)
+            card.solicitar_imagem.connect(
+                lambda chave=chave: self._selecionar_imagem(chave)
+            )
+            self._cards[chave] = card
+
+        # stretch (não addStretch) + Qt.AlignHCenter: a altura continua
+        # livre para preencher o espaço vertical sobrando (dando ao painel
+        # a altura de que ele precisa pra calcular o tamanho dos cards),
+        # mas a LARGURA passa a ser a do próprio painel (auto-ajustada em
+        # `_PainelFotosAluno._recalcular`), centralizada em vez de esticada
+        # -- é isso que tira o vazio nas laterais do container.
+        # Sem espaçador extra depois do painel: o próprio wizard já reserva
+        # uma margem confortável entre o fim da etapa atual e os botões de
+        # navegação (`CadastroAlunoWizard`, addStretch antes da barra de
+        # botões) -- repetir esse respiro aqui só encolheria os cards à toa.
+        painel = _PainelFotosAluno(self._cards.values())
+        layout_raiz.addWidget(painel, 1, Qt.AlignHCenter)
+
+    def _selecionar_imagem(self, chave: str) -> None:
+        caminho, _ = QFileDialog.getOpenFileName(
+            self, "Selecionar imagem", "", _FILTRO_ARQUIVOS_IMAGEM
+        )
+        if caminho:
+            self._cards[chave].definir_imagem(caminho)
+
+    def obter_dados_validados(self):
+        """Sem campos obrigatórios nesta etapa -- sempre retorna um dict
+        (nunca None), com a foto de cada posição ou None para a que ainda
+        não foi escolhida."""
+        return {chave: self._cards[chave].caminho_imagem for chave, _ in _SLOTS_FOTOS}
+
+    def limpar(self) -> None:
+        for card in self._cards.values():
+            card.definir_imagem(None)
 
 
 class CadastroAlunoWizard(QWidget):
@@ -3042,6 +3361,7 @@ class CadastroAlunoWizard(QWidget):
             HistoricoSaudeStep(),
             AvaliacaoFisicaStep(),
             ComposicaoCorporalStep(),
+            ImagensAlunoStep(),
         ]
 
         self._stack = QStackedWidget()
@@ -3074,13 +3394,12 @@ class CadastroAlunoWizard(QWidget):
     # -- Navegação -----------------------------------------------------
 
     def _atualizar_botoes(self) -> None:
-        # O texto fica sempre "Próximo >": o cadastro ainda vai ganhar mais
-        # etapas, então a etapa mais recente nunca deve parecer o fim do
-        # fluxo — mesmo sendo, por ora, a última realmente implementada (ao
-        # avançar por ela, os dados são salvos por não haver próxima etapa
-        # ainda; quando a etapa final de fato existir, ela é quem deve
-        # assumir o rótulo "Salvar").
-        self._botao_proximo.setText("Próximo >")
+        # A Etapa 8 (Registro de imagens) é a última de fato -- avançar por
+        # ela salva o cadastro (ver `_proximo_clicado`), então só ela troca
+        # o rótulo do botão para "Salvar"; todas as anteriores continuam
+        # "Próximo >".
+        ultima_etapa = self._etapa_atual == len(self._etapas) - 1
+        self._botao_proximo.setText("Salvar" if ultima_etapa else "Próximo >")
 
     def _anterior_clicado(self) -> None:
         self._label_erro_geral.hide()
