@@ -1,0 +1,394 @@
+"""Regras de acesso aos dados dos alunos, isolando a UI do SQL bruto."""
+
+import inspect
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
+from database.database import obter_conexao
+
+# Colunas de cada avaliação (Etapas 6 e 7), na ordem em que aparecem na
+# tabela -- usadas tanto para montar o INSERT quanto para ler de volta uma
+# linha do banco como dict. `data` é sempre a primeira coluna de verdade
+# (id/aluno_id/criado_em ficam de fora -- são geridas pelo próprio banco).
+_COLUNAS_CIRCUNFERENCIA = (
+    "data", "ombro", "torax", "cintura", "abdominal", "quadril",
+    "braco_e", "braco_e_contraido", "braco_d", "braco_d_contraido",
+    "antebraco_e", "antebraco_d", "coxa_e", "coxa_d",
+    "panturrilha_e", "panturrilha_d",
+)
+_COLUNAS_COMPOSICAO = (
+    "data", "peso", "triceps", "peito", "axilar_media", "subescapular",
+    "dobra_abdominal", "supra_iliaca", "coxa_dobra", "soma_dobras",
+    "densidade_corporal", "percentual_gordura", "percentual_gordura_bruto",
+    "massa_gorda", "massa_magra",
+)
+
+
+@dataclass(frozen=True)
+class Aluno:
+    id: int
+    nome_completo: str
+    idade: int
+    sexo: str
+    criado_em: str
+    altura_m: Optional[float] = None
+    treinou_antes: Optional[str] = None
+    tempo_treinamento: Optional[str] = None
+    tempo_sem_atividade: Optional[str] = None
+    objetivo_principal: Optional[str] = None
+    objetivo_outro: Optional[str] = None
+    frequencia_semanal: Optional[str] = None
+    tempo_treino_dia: Optional[str] = None
+    doenca_tem: Optional[str] = None
+    doenca_qual: Optional[str] = None
+    limitacao_tem: Optional[str] = None
+    limitacao_qual: Optional[str] = None
+    dor_tem: Optional[str] = None
+    dor_qual: Optional[str] = None
+    cirurgia_tem: Optional[str] = None
+    cirurgia_qual: Optional[str] = None
+    medida_ombro: Optional[float] = None
+    medida_torax: Optional[float] = None
+    medida_cintura: Optional[float] = None
+    medida_abdominal: Optional[float] = None
+    medida_quadril: Optional[float] = None
+    medida_braco_e: Optional[float] = None
+    medida_braco_e_contraido: Optional[float] = None
+    medida_braco_d: Optional[float] = None
+    medida_braco_d_contraido: Optional[float] = None
+    medida_antebraco_e: Optional[float] = None
+    medida_antebraco_d: Optional[float] = None
+    medida_coxa_d: Optional[float] = None
+    medida_coxa_e: Optional[float] = None
+    medida_panturrilha_e: Optional[float] = None
+    medida_panturrilha_d: Optional[float] = None
+    foto_frente: Optional[str] = None
+    foto_costas: Optional[str] = None
+    foto_lado_direito: Optional[str] = None
+    foto_lado_esquerdo: Optional[str] = None
+
+
+class AlunoService:
+    """Operações de cadastro e consulta de alunos no banco local."""
+
+    def criar_aluno(
+        self,
+        nome_completo: str,
+        idade: int,
+        sexo: str,
+        altura_m: Optional[float] = None,
+        treinou_antes: Optional[str] = None,
+        tempo_treinamento: Optional[str] = None,
+        tempo_sem_atividade: Optional[str] = None,
+        objetivo_principal: Optional[str] = None,
+        objetivo_outro: Optional[str] = None,
+        frequencia_semanal: Optional[str] = None,
+        tempo_treino_dia: Optional[str] = None,
+        doenca_tem: Optional[str] = None,
+        doenca_qual: Optional[str] = None,
+        limitacao_tem: Optional[str] = None,
+        limitacao_qual: Optional[str] = None,
+        dor_tem: Optional[str] = None,
+        dor_qual: Optional[str] = None,
+        cirurgia_tem: Optional[str] = None,
+        cirurgia_qual: Optional[str] = None,
+        medida_ombro: Optional[float] = None,
+        medida_torax: Optional[float] = None,
+        medida_cintura: Optional[float] = None,
+        medida_abdominal: Optional[float] = None,
+        medida_quadril: Optional[float] = None,
+        medida_braco_e: Optional[float] = None,
+        medida_braco_e_contraido: Optional[float] = None,
+        medida_braco_d: Optional[float] = None,
+        medida_braco_d_contraido: Optional[float] = None,
+        medida_antebraco_e: Optional[float] = None,
+        medida_antebraco_d: Optional[float] = None,
+        medida_coxa_d: Optional[float] = None,
+        medida_coxa_e: Optional[float] = None,
+        medida_panturrilha_e: Optional[float] = None,
+        medida_panturrilha_d: Optional[float] = None,
+        foto_frente: Optional[str] = None,
+        foto_costas: Optional[str] = None,
+        foto_lado_direito: Optional[str] = None,
+        foto_lado_esquerdo: Optional[str] = None,
+    ) -> Aluno:
+        nome_completo = nome_completo.strip()
+        conexao = obter_conexao()
+        try:
+            cursor = conexao.execute(
+                """
+                INSERT INTO alunos (
+                    nome_completo, idade, sexo, altura_m,
+                    treinou_antes, tempo_treinamento, tempo_sem_atividade,
+                    objetivo_principal, objetivo_outro,
+                    frequencia_semanal, tempo_treino_dia,
+                    doenca_tem, doenca_qual,
+                    limitacao_tem, limitacao_qual,
+                    dor_tem, dor_qual,
+                    cirurgia_tem, cirurgia_qual,
+                    medida_ombro, medida_torax, medida_cintura,
+                    medida_abdominal, medida_quadril,
+                    medida_braco_e, medida_braco_e_contraido,
+                    medida_braco_d, medida_braco_d_contraido,
+                    medida_antebraco_e, medida_antebraco_d,
+                    medida_coxa_d, medida_coxa_e,
+                    medida_panturrilha_e, medida_panturrilha_d,
+                    foto_frente, foto_costas,
+                    foto_lado_direito, foto_lado_esquerdo
+                )
+                VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                )
+                """,
+                (
+                    nome_completo, idade, sexo, altura_m,
+                    treinou_antes, tempo_treinamento, tempo_sem_atividade,
+                    objetivo_principal, objetivo_outro,
+                    frequencia_semanal, tempo_treino_dia,
+                    doenca_tem, doenca_qual,
+                    limitacao_tem, limitacao_qual,
+                    dor_tem, dor_qual,
+                    cirurgia_tem, cirurgia_qual,
+                    medida_ombro, medida_torax, medida_cintura,
+                    medida_abdominal, medida_quadril,
+                    medida_braco_e, medida_braco_e_contraido,
+                    medida_braco_d, medida_braco_d_contraido,
+                    medida_antebraco_e, medida_antebraco_d,
+                    medida_coxa_d, medida_coxa_e,
+                    medida_panturrilha_e, medida_panturrilha_d,
+                    foto_frente, foto_costas,
+                    foto_lado_direito, foto_lado_esquerdo,
+                ),
+            )
+            conexao.commit()
+            novo_id = cursor.lastrowid
+        finally:
+            conexao.close()
+
+        aluno = self.buscar_por_id(novo_id)
+        assert aluno is not None  # acabou de ser inserido
+        return aluno
+
+    def atualizar_aluno(self, aluno_id: int, **campos) -> Optional["Aluno"]:
+        """Atualiza só os campos passados (edição do cadastro básico).
+
+        Nomes de coluna não podem ser parametrizados como valores (`?`) --
+        por isso `campos` é filtrado contra a própria assinatura de
+        `criar_aluno` (a lista real de colunas aceitas) antes de entrar na
+        string do UPDATE, nunca contra o que quer que o chamador mande.
+        `WHERE id = ?` garante que a atualização nunca alcança outro aluno.
+        """
+        if not campos:
+            return self.buscar_por_id(aluno_id)
+
+        colunas_validas = set(inspect.signature(self.criar_aluno).parameters)
+        campos = {chave: valor for chave, valor in campos.items() if chave in colunas_validas}
+        if not campos:
+            return self.buscar_por_id(aluno_id)
+
+        atribuicoes = ", ".join(f"{coluna} = ?" for coluna in campos)
+        valores = list(campos.values()) + [aluno_id]
+
+        conexao = obter_conexao()
+        try:
+            conexao.execute(
+                f"UPDATE alunos SET {atribuicoes} WHERE id = ?", valores
+            )
+            conexao.commit()
+        finally:
+            conexao.close()
+
+        return self.buscar_por_id(aluno_id)
+
+    def existe_algum_aluno(self) -> bool:
+        """Indica se há pelo menos um aluno cadastrado, ignorando filtros de busca."""
+        conexao = obter_conexao()
+        try:
+            linha = conexao.execute("SELECT 1 FROM alunos LIMIT 1").fetchone()
+            return linha is not None
+        finally:
+            conexao.close()
+
+    def excluir_aluno(self, aluno_id: int) -> None:
+        conexao = obter_conexao()
+        try:
+            conexao.execute("DELETE FROM alunos WHERE id = ?", (aluno_id,))
+            conexao.commit()
+        finally:
+            conexao.close()
+
+    def listar_alunos(self, termo_busca: str = "") -> List[Aluno]:
+        conexao = obter_conexao()
+        try:
+            termo_busca = (termo_busca or "").strip()
+            if termo_busca:
+                linhas = conexao.execute(
+                    """
+                    SELECT * FROM alunos
+                    WHERE nome_completo LIKE ? COLLATE NOCASE
+                    ORDER BY nome_completo ASC
+                    """,
+                    (f"%{termo_busca}%",),
+                ).fetchall()
+            else:
+                linhas = conexao.execute(
+                    "SELECT * FROM alunos ORDER BY nome_completo ASC"
+                ).fetchall()
+            return [self._linha_para_aluno(linha) for linha in linhas]
+        finally:
+            conexao.close()
+
+    def buscar_por_id(self, aluno_id: int) -> Optional[Aluno]:
+        conexao = obter_conexao()
+        try:
+            linha = conexao.execute(
+                "SELECT * FROM alunos WHERE id = ?", (aluno_id,)
+            ).fetchone()
+            return self._linha_para_aluno(linha) if linha else None
+        finally:
+            conexao.close()
+
+    @staticmethod
+    def _linha_para_aluno(linha) -> Aluno:
+        return Aluno(
+            id=linha["id"],
+            nome_completo=linha["nome_completo"],
+            idade=linha["idade"],
+            sexo=linha["sexo"],
+            criado_em=linha["criado_em"],
+            altura_m=linha["altura_m"],
+            treinou_antes=linha["treinou_antes"],
+            tempo_treinamento=linha["tempo_treinamento"],
+            tempo_sem_atividade=linha["tempo_sem_atividade"],
+            objetivo_principal=linha["objetivo_principal"],
+            objetivo_outro=linha["objetivo_outro"],
+            frequencia_semanal=linha["frequencia_semanal"],
+            tempo_treino_dia=linha["tempo_treino_dia"],
+            doenca_tem=linha["doenca_tem"],
+            doenca_qual=linha["doenca_qual"],
+            limitacao_tem=linha["limitacao_tem"],
+            limitacao_qual=linha["limitacao_qual"],
+            dor_tem=linha["dor_tem"],
+            dor_qual=linha["dor_qual"],
+            cirurgia_tem=linha["cirurgia_tem"],
+            cirurgia_qual=linha["cirurgia_qual"],
+            medida_ombro=linha["medida_ombro"],
+            medida_torax=linha["medida_torax"],
+            medida_cintura=linha["medida_cintura"],
+            medida_abdominal=linha["medida_abdominal"],
+            medida_quadril=linha["medida_quadril"],
+            medida_braco_e=linha["medida_braco_e"],
+            medida_braco_e_contraido=linha["medida_braco_e_contraido"],
+            medida_braco_d=linha["medida_braco_d"],
+            medida_braco_d_contraido=linha["medida_braco_d_contraido"],
+            medida_antebraco_e=linha["medida_antebraco_e"],
+            medida_antebraco_d=linha["medida_antebraco_d"],
+            medida_coxa_d=linha["medida_coxa_d"],
+            medida_coxa_e=linha["medida_coxa_e"],
+            medida_panturrilha_e=linha["medida_panturrilha_e"],
+            medida_panturrilha_d=linha["medida_panturrilha_d"],
+            foto_frente=linha["foto_frente"],
+            foto_costas=linha["foto_costas"],
+            foto_lado_direito=linha["foto_lado_direito"],
+            foto_lado_esquerdo=linha["foto_lado_esquerdo"],
+        )
+
+    # -- Avaliações (Etapa 6: circunferências) ----------------------------
+
+    def adicionar_avaliacoes_circunferencias(
+        self, aluno_id: int, avaliacoes: List[Dict[str, Any]]
+    ) -> None:
+        """Insere avaliações de circunferências NOVAS de UM aluno -- nunca
+        apaga nem sobrescreve as que já existem no banco.
+
+        Uma avaliação salva é permanente (regras de edição, seção 9: "uma
+        avaliação salva não pode voltar para o estado editável"): quem
+        chama (`CadastroAlunoWizard._salvar_aluno`) só passa aqui as
+        avaliações que ainda não têm linha no banco -- as já salvas nunca
+        passam de novo por este método, então não há risco de excluir ou
+        regravar uma avaliação antiga.
+        """
+        if not avaliacoes:
+            return
+
+        colunas = ", ".join(_COLUNAS_CIRCUNFERENCIA)
+        marcadores = ", ".join("?" for _ in _COLUNAS_CIRCUNFERENCIA)
+
+        conexao = obter_conexao()
+        try:
+            for avaliacao in avaliacoes:
+                valores = [avaliacao.get(coluna) for coluna in _COLUNAS_CIRCUNFERENCIA]
+                conexao.execute(
+                    f"""
+                    INSERT INTO avaliacoes_circunferencias (aluno_id, {colunas})
+                    VALUES (?, {marcadores})
+                    """,
+                    [aluno_id, *valores],
+                )
+            conexao.commit()
+        finally:
+            conexao.close()
+
+    def listar_avaliacoes_circunferencias(self, aluno_id: int) -> List[Dict[str, Any]]:
+        """Todas as avaliações de circunferências de UM aluno, na ordem em
+        que foram criadas (mesma ordem das colunas na tela)."""
+        colunas = ", ".join(_COLUNAS_CIRCUNFERENCIA)
+        conexao = obter_conexao()
+        try:
+            linhas = conexao.execute(
+                f"""
+                SELECT {colunas} FROM avaliacoes_circunferencias
+                WHERE aluno_id = ? ORDER BY id ASC
+                """,
+                (aluno_id,),
+            ).fetchall()
+            return [dict(linha) for linha in linhas]
+        finally:
+            conexao.close()
+
+    # -- Avaliações (Etapa 7: dobras cutâneas / composição corporal) -------
+
+    def adicionar_avaliacoes_composicao(
+        self, aluno_id: int, avaliacoes: List[Dict[str, Any]]
+    ) -> None:
+        """Mesmo mecanismo de `adicionar_avaliacoes_circunferencias`
+        (só INSERT, nunca apaga/sobrescreve o que já está salvo), aplicado
+        às avaliações da Etapa 7."""
+        if not avaliacoes:
+            return
+
+        colunas = ", ".join(_COLUNAS_COMPOSICAO)
+        marcadores = ", ".join("?" for _ in _COLUNAS_COMPOSICAO)
+
+        conexao = obter_conexao()
+        try:
+            for avaliacao in avaliacoes:
+                valores = [avaliacao.get(coluna) for coluna in _COLUNAS_COMPOSICAO]
+                conexao.execute(
+                    f"""
+                    INSERT INTO avaliacoes_composicao_corporal (aluno_id, {colunas})
+                    VALUES (?, {marcadores})
+                    """,
+                    [aluno_id, *valores],
+                )
+            conexao.commit()
+        finally:
+            conexao.close()
+
+    def listar_avaliacoes_composicao(self, aluno_id: int) -> List[Dict[str, Any]]:
+        """Todas as avaliações de composição corporal de UM aluno, na ordem
+        em que foram criadas (mesma ordem das colunas na tela)."""
+        colunas = ", ".join(_COLUNAS_COMPOSICAO)
+        conexao = obter_conexao()
+        try:
+            linhas = conexao.execute(
+                f"""
+                SELECT {colunas} FROM avaliacoes_composicao_corporal
+                WHERE aluno_id = ? ORDER BY id ASC
+                """,
+                (aluno_id,),
+            ).fetchall()
+            return [dict(linha) for linha in linhas]
+        finally:
+            conexao.close()
