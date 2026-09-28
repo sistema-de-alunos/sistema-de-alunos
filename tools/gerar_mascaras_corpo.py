@@ -319,27 +319,32 @@ def _suavizar_contorno(binaria: np.ndarray, raio: int, tamanho_minimo: int = 100
 # a imagem base for substituída, recalibre soltando um overlay desses
 # pontos sobre a nova imagem antes de confiar neles de novo.
 POLIGONO_CINTURA_LADO = [
-    (0.360, 0.278),  # ponta superior, entre a axila e o peitoral
-    (0.388, 0.283),
-    (0.415, 0.290),
-    (0.435, 0.298),
-    (0.443, 0.312),
-    (0.438, 0.330),
-    (0.428, 0.348),
-    (0.418, 0.365),
-    (0.408, 0.380),
-    (0.400, 0.383),  # início da curva do fundo (perto do abdômen)
-    (0.386, 0.386),
-    (0.372, 0.388),
-    (0.358, 0.387),
-    (0.345, 0.384),
-    (0.334, 0.380),  # fim da curva do fundo (perto do braço)
-    (0.330, 0.368),
-    (0.330, 0.345),
-    (0.334, 0.322),
-    (0.342, 0.300),
-    (0.352, 0.286),
+    (0.360, 0.268),  # ponta superior, entre a axila e o peitoral -- axila ainda maior
+    (0.392, 0.275),
+    (0.416, 0.284),
+    (0.424, 0.306),
+    (0.431, 0.317),
+    (0.427, 0.332),
+    (0.419, 0.346),
+    (0.411, 0.370),
+    (0.403, 0.392),
+    (0.396, 0.402),  # início da curva do fundo (perto do abdômen)
+    (0.385, 0.407),
+    (0.374, 0.408),
+    (0.363, 0.405),
+    (0.352, 0.397),
+    (0.390, 0.377),  # fim da curva do fundo (perto do braço) -- lateral externa um pouco mais estreita
+    (0.388, 0.353),
+    (0.373, 0.332),  # borda externa superior puxada pra axila (serrátil livre ali)
+    (0.364, 0.318),
+    (0.362, 0.303),
+    (0.364, 0.278),
 ]
+
+# A ilustração não é perfeitamente simétrica perto da axila: no lado
+# DIREITO da imagem (espelho) os 4 últimos pontos acima (borda externa
+# superior) ficavam um pouco largos demais, então recuam só lá.
+RECUO_ESPELHO_TOPO_EXTERNO = 0.004
 
 # Regiões vizinhas que a máscara da cintura nunca pode invadir -- mesmo que
 # o polígono acima avance por cima delas, elas são subtraídas antes de
@@ -352,7 +357,12 @@ def mascara_poligono_cintura(h: int, w: int) -> np.ndarray:
     booleana do tamanho da imagem -- ainda sem recorte pela silhueta nem
     pelas regiões vizinhas, isso acontece em `main()`."""
     mascara = np.zeros((h, w), dtype=bool)
-    for pontos in (POLIGONO_CINTURA_LADO, [(1 - x, y) for x, y in POLIGONO_CINTURA_LADO]):
+    n = len(POLIGONO_CINTURA_LADO)
+    espelho = [
+        (1 - (x + RECUO_ESPELHO_TOPO_EXTERNO if i >= n - 4 else x), y)
+        for i, (x, y) in enumerate(POLIGONO_CINTURA_LADO)
+    ]
+    for pontos in (POLIGONO_CINTURA_LADO, espelho):
         ys = [y * h for _x, y in pontos]
         xs = [x * w for x, _y in pontos]
         rr, cc = draw_polygon(ys, xs, shape=(h, w))
