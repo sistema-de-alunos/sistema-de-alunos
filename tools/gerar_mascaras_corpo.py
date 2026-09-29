@@ -1,4 +1,4 @@
-"""Gera as máscaras de região usadas por `gui/widgets/corpo_interativo.py`.
+﻿"""Gera as máscaras de região usadas por `gui/widgets/corpo_interativo.py`.
 
 FERRAMENTA DE DESENVOLVIMENTO -- não é executada pelo app, e as bibliotecas
 que ela usa (numpy/scipy/scikit-image/Pillow) NÃO são dependência do app em
@@ -278,6 +278,61 @@ SUAVIZACAO_CONTORNO = {
     "hip": 6,
 }
 
+# Faixa (frações de altura) logo abaixo do umbigo que liga os 3 pedaços de
+# "hip" num só: as asas e a ponta central só se tocam através da borda de
+# baixo do "abdomen" (as coxas sobem entre elas). Os pixels de
+# `_DOADORAS_PONTE_QUADRIL` dessa faixa passam pro "hip" e saem da dona
+# original -- a faixa desce além do abdômen e come o topo das coxas pra
+# deixar a ligação mais grossa.
+PONTE_QUADRIL_Y = (0.412, 0.448)
+_DOADORAS_PONTE_QUADRIL = ("abdomen", "right_thigh", "left_thigh")
+
+# O fechamento da silhueta solda o vão entre as pernas (ver comentário de
+# `ZONAS_EXCLUSAO_FECHAMENTO`) e as coxas herdavam esse fundo como lateral
+# interna. Dentro desta faixa central de x, as coxas são recortadas pelo
+# alfa real de `IMAGEM` (pixel transparente = fundo) -- lateral externa e
+# resto da silhueta não mudam.
+FAIXA_INTERNA_COXAS_X = (0.44, 0.56)
+
+# Na lateral EXTERNA, o mesmo fechamento cria uma "aba" sobre o fundo no
+# meio da coxa. Não some de todo (só "um pouco"): pixels de fundo fora da
+# faixa central são mantidos até esta distância (px) do corpo real. A aba
+# da esquerda da imagem ("right_thigh") era maior (~39px) que a da direita
+# (~21px), por isso recua mais.
+ABA_EXTERNA_COXA_MAX_PX = {"right_thigh": 3, "left_thigh": 2}
+
+# Faixas da lateral externa onde sobrava pele real sem máscara: em cada
+# faixa de linhas (frações de altura) a coxa cresce até o raio (px) pra
+# fora, só sobre pixels que não são de outra região.
+AUMENTO_EXTERNO_COXA = [
+    ((0.59, 0.655), 6),   # parte de baixo, perto do joelho
+    ((0.45, 0.56), 40),   # parte de cima, perto do quadril
+]
+
+# Quanto (px) braço e ombro crescem pra fora, sobre a borda escura da pele
+# que a silhueta deixa de fora (ver uso em `main()`).
+AUMENTO_EXTERNO_BRACO_OMBRO_PX = {"right_arm": 5, "left_arm": 5, "shoulder": 5}
+
+# O antebraço terminava no meio: a metade de baixo (até o punho) é da mão
+# ("ignore_hand_*"). Ele cresce este tanto (px) pra baixo, só a partir da
+# linha ALONGAMENTO_ANTEBRACO_Y0 (fração da altura) -- acima dela nada muda.
+ALONGAMENTO_ANTEBRACO_PX = 42
+ALONGAMENTO_ANTEBRACO_Y0 = 0.42
+# Alcance (px) do preenchimento da borda interna do antebraço (ver `main()`).
+BORDA_INTERNA_ANTEBRACO_PX = 12
+
+# Quanto (px) o topo das panturrilhas desce (corte por altura, ver `main()`).
+RECUO_TOPO_PANTURRILHA_PX = 85
+# Quanto (px) as bordas externa/interna das panturrilhas crescem.
+AUMENTO_LATERAL_PANTURRILHA_PX = 8
+# Quanto (px) o meio do topo desce em relação aos cantos (arco invertido).
+ARREDONDAMENTO_TOPO_PANTURRILHA_PX = 30
+
+# Ponta de baixo das coxas (ver `main()`): quanto (px) desce, e quanto o
+# meio sobe em arco em volta do joelho.
+ALONGAMENTO_COXA_PX = 20
+ARCO_JOELHO_COXA_PX = 30
+
 
 def _suavizar_contorno(binaria: np.ndarray, raio: int, tamanho_minimo: int = 1000) -> np.ndarray:
     """Arredonda cantos retos artificiais (ver `SUAVIZACAO_CONTORNO`) sem
@@ -345,6 +400,14 @@ POLIGONO_CINTURA_LADO = [
 # DIREITO da imagem (espelho) os 4 últimos pontos acima (borda externa
 # superior) ficavam um pouco largos demais, então recuam só lá.
 RECUO_ESPELHO_TOPO_EXTERNO = 0.004
+# Recuo extra de TODA a borda externa (pontos a partir do fundo externo, perto
+# do antebraço) só no espelho -- a cintura direita da imagem encostava demais
+# no braço. O lado esquerdo da imagem não muda.
+RECUO_ESPELHO_EXTERNO = 0.010
+# ...mas a ponta superior externa (perto do bíceps) ficou curta demais com
+# esse recuo -- os 3 pontos do topo externo avançam de volta pra fora, só
+# no espelho.
+AVANCO_ESPELHO_TOPO = 0.012
 
 # Regiões vizinhas que a máscara da cintura nunca pode invadir -- mesmo que
 # o polígono acima avance por cima delas, elas são subtraídas antes de
@@ -359,7 +422,13 @@ def mascara_poligono_cintura(h: int, w: int) -> np.ndarray:
     mascara = np.zeros((h, w), dtype=bool)
     n = len(POLIGONO_CINTURA_LADO)
     espelho = [
-        (1 - (x + RECUO_ESPELHO_TOPO_EXTERNO if i >= n - 4 else x), y)
+        (
+            1 - x
+            - (RECUO_ESPELHO_TOPO_EXTERNO if i >= n - 4 else 0)
+            - (RECUO_ESPELHO_EXTERNO if i >= n - 7 else 0)
+            + (AVANCO_ESPELHO_TOPO if i >= n - 3 else 0),
+            y,
+        )
         for i, (x, y) in enumerate(POLIGONO_CINTURA_LADO)
     ]
     for pontos in (POLIGONO_CINTURA_LADO, espelho):
@@ -468,6 +537,19 @@ def main() -> None:
 
     rotulos_ws = watershed(elevacao, markers=marcadores, mask=corpo_mask, compactness=COMPACTNESS)
 
+    # Ver `FAIXA_INTERNA_COXAS_X`.
+    fundo_real = np.array(Image.open(IMAGEM).convert("RGBA"))[..., 3] < 128
+    dist_ao_corpo = ndimage.distance_transform_edt(fundo_real)
+    fundo_entre_pernas = fundo_real.copy()
+    fundo_entre_pernas[:, : int(FAIXA_INTERNA_COXAS_X[0] * w)] = False
+    fundo_entre_pernas[:, int(FAIXA_INTERNA_COXAS_X[1] * w) :] = False
+
+    # Ver `PONTE_QUADRIL_Y`.
+    ponte_quadril = np.isin(rotulos_ws, [nome_para_id[n] for n in _DOADORAS_PONTE_QUADRIL])
+    ponte_quadril[: int(PONTE_QUADRIL_Y[0] * h)] = False
+    ponte_quadril[int(PONTE_QUADRIL_Y[1] * h) :] = False
+
+    mascaras_finais: dict = {}
     for nome in nomes:
         if nome.startswith("ignore"):
             continue
@@ -486,6 +568,135 @@ def main() -> None:
             binaria = mascara_poligono_cintura(h, w) & corpo_mask & ~vizinhas
         else:
             binaria = rotulos_ws == idx
+        if nome == "hip":
+            binaria = binaria | ponte_quadril
+        elif nome in _DOADORAS_PONTE_QUADRIL:
+            binaria = binaria & ~ponte_quadril
+        if nome in ("right_arm", "left_arm"):
+            # O fechamento da silhueta solda o vão braço-tronco e o watershed
+            # dava esse fundo (e a pele do tronco do outro lado dele, até a
+            # cintura) ao braço. Recorta pelo alfa real e fica só com o
+            # maior pedaço -- o braço de verdade.
+            binaria = binaria & ~fundo_real
+            rotulos_braco, n_pedacos = ndimage.label(binaria)
+            if n_pedacos > 1:
+                tamanhos = ndimage.sum(binaria, rotulos_braco, range(1, n_pedacos + 1))
+                binaria = rotulos_braco == int(np.argmax(tamanhos)) + 1
+        if nome in ("right_forearm", "left_forearm"):
+            # Ver `ALONGAMENTO_ANTEBRACO_PX`: cresce "por dentro" do braço
+            # desenhado (dilatação geodésica), só sobre pele que é da mão
+            # ("ignore_*") ou de ninguém, e só pra baixo do topo atual --
+            # a frente de crescimento segue a inclinação do próprio antebraço.
+            # Antes, descarta pedaços soltos (havia um perto do punho do
+            # "left_forearm" que cresceria até a mão).
+            rotulos_ab, n_pedacos = ndimage.label(binaria)
+            if n_pedacos > 1:
+                tamanhos = ndimage.sum(binaria, rotulos_ab, range(1, n_pedacos + 1))
+                binaria = rotulos_ab == int(np.argmax(tamanhos)) + 1
+            livre = ~fundo_real & ~np.isin(rotulos_ws, [nome_para_id[n] for n in nomes if n != nome and not n.startswith("ignore")])
+            livre[: int(ALONGAMENTO_ANTEBRACO_Y0 * h)] = False
+            binaria = ndimage.binary_dilation(
+                binaria, iterations=ALONGAMENTO_ANTEBRACO_PX, mask=livre | binaria
+            )
+            # Nivela: o lado de fora parava mais alto que o de dentro. Completa
+            # até a linha mais baixa já alcançada, deixando o fundo reto.
+            livre[np.where(binaria.any(axis=1))[0].max() + 1 :] = False
+            binaria = ndimage.binary_dilation(
+                binaria, iterations=ALONGAMENTO_ANTEBRACO_PX, mask=livre | binaria
+            )
+            # Borda interna (lado do tronco), perto do cotovelo: sobrava pele
+            # sem máscara -- era do braço no watershed, mas saiu do braço no
+            # recorte "maior pedaço" acima. O antebraço cobre essa pele (e
+            # fecha os furinhos), sem tocar a máscara final do braço nem
+            # outras regiões, e só na metade do lado do tronco.
+            bloqueadas = np.isin(rotulos_ws, [
+                nome_para_id[n] for n in nomes
+                if n != nome and not n.startswith("ignore") and n not in mascaras_finais
+            ])
+            for n, m in mascaras_finais.items():
+                bloqueadas |= m
+            cx = int(np.where(binaria.any(axis=0))[0].mean())
+            lado_tronco = np.zeros_like(binaria)
+            if cx < w // 2:
+                lado_tronco[:, cx:] = True
+            else:
+                lado_tronco[:, :cx] = True
+            extra = ndimage.binary_dilation(binaria, morph_disk(BORDA_INTERNA_ANTEBRACO_PX))
+            binaria = binaria | (extra & lado_tronco & ~fundo_real & ~bloqueadas)
+            binaria = ndimage.binary_fill_holes(binaria)
+        if nome in ("right_calf", "left_calf"):
+            # O fechamento da silhueta solda o vão entre as canelas e as duas
+            # panturrilhas se ligavam por ele. Recorta pelo alfa real, fica
+            # com o maior pedaço e baixa o topo `RECUO_TOPO_PANTURRILHA_PX`
+            # (corte por altura -- as laterais abaixo da linha ficam intactas).
+            binaria = binaria & ~fundo_real
+            rotulos_pant, n_pedacos = ndimage.label(binaria)
+            if n_pedacos > 1:
+                tamanhos = ndimage.sum(binaria, rotulos_pant, range(1, n_pedacos + 1))
+                binaria = rotulos_pant == int(np.argmax(tamanhos)) + 1
+            topo = np.where(binaria.any(axis=1))[0].min()
+            corte = topo + RECUO_TOPO_PANTURRILHA_PX
+            # Topo em arco invertido: o corte é uma meia-elipse -- nos cantos
+            # fica em `corte` e no meio desce `ARREDONDAMENTO_TOPO_PANTURRILHA_PX`,
+            # encaixando embaixo da curva do joelho.
+            xs_topo = np.where(binaria[corte : corte + 40].any(axis=0))[0]
+            cx, rx = (xs_topo.min() + xs_topo.max()) / 2, (xs_topo.max() - xs_topo.min()) / 2 + 1
+            u = np.clip((np.arange(w) - cx) / rx, -1, 1)
+            corte_col = corte + ARREDONDAMENTO_TOPO_PANTURRILHA_PX * np.sqrt(1 - u**2)
+            acima_do_oval = np.arange(h)[:, None] < corte_col[None, :]
+            binaria = binaria & ~acima_do_oval
+            # Alarga as bordas externa e interna sobre pele real sem outra
+            # região (a borda escura fica fora da silhueta), sem subir acima
+            # do topo oval.
+            extra = ndimage.binary_dilation(binaria, morph_disk(AUMENTO_LATERAL_PANTURRILHA_PX))
+            extra &= ~acima_do_oval
+            outras = np.isin(rotulos_ws, [nome_para_id[n] for n in nomes if n != nome and not n.startswith("ignore")])
+            binaria = binaria | (extra & ~fundo_real & ~outras)
+        if nome in AUMENTO_EXTERNO_BRACO_OMBRO_PX:
+            # A borda externa é pele escura (gray<100) fora da silhueta.
+            # Cresce só sobre pixels sem região nenhuma (rótulo 0) que são
+            # corpo pelo alfa real -- vizinhos e o vão braço-tronco ficam
+            # intocados, então na prática só o lado de fora cresce.
+            extra = ndimage.binary_dilation(binaria, morph_disk(AUMENTO_EXTERNO_BRACO_OMBRO_PX[nome]))
+            binaria = binaria | (extra & (rotulos_ws == 0) & ~fundo_real)
+        if nome in ("right_thigh", "left_thigh"):
+            binaria = binaria & ~fundo_entre_pernas
+            aba = dist_ao_corpo > ABA_EXTERNA_COXA_MAX_PX[nome]
+            aba[:, int(FAIXA_INTERNA_COXAS_X[0] * w) : int(FAIXA_INTERNA_COXAS_X[1] * w)] = False
+            binaria = binaria & ~aba
+            # Ver `AUMENTO_EXTERNO_COXA`. Regiões "ignore_*" podem ser
+            # invadidas: a pele ao lado do topo da coxa é "ignore_hand_*"
+            # (sementes extras pra tirá-la do quadril), não a mão desenhada,
+            # que fica além do vão de fundo -- e `fundo_real` não é cruzado.
+            outras = np.isin(rotulos_ws, [nome_para_id[n] for n in nomes if n != nome and not n.startswith("ignore")])
+            base = binaria
+            for (y0f, y1f), raio in AUMENTO_EXTERNO_COXA:
+                extra = ndimage.binary_dilation(base, morph_disk(raio))
+                extra[: int(y0f * h)] = False
+                extra[int(y1f * h) :] = False
+                extra[:, int(FAIXA_INTERNA_COXAS_X[0] * w) : int(FAIXA_INTERNA_COXAS_X[1] * w)] = False
+                # A borda externa ali é pele escura (gray<100) que a silhueta
+                # trata como fundo -- o limite aqui é o alfa real da imagem.
+                binaria = binaria | (extra & ~fundo_real & ~outras)
+            # Ponta de baixo: desce `ALONGAMENTO_COXA_PX` (dilatação geodésica
+            # sobre pele real -- pode tomar o joelho, que é território de
+            # panturrilha no watershed mas fica acima do topo dela), nivela e
+            # recorta em arco: laterais descem, o meio sobe
+            # `ARCO_JOELHO_COXA_PX` em volta do joelho (espelho do topo da
+            # panturrilha).
+            fundo_coxa = np.where(binaria.any(axis=1))[0].max()
+            limite = fundo_coxa + ALONGAMENTO_COXA_PX
+            outras_sem_pant = outras & ~np.isin(rotulos_ws, [nome_para_id["right_calf"], nome_para_id["left_calf"]])
+            livre = ~fundo_real & ~outras_sem_pant
+            livre[: fundo_coxa - 2 * ALONGAMENTO_COXA_PX] = False
+            livre[limite + 1 :] = False
+            binaria = ndimage.binary_dilation(binaria, iterations=ALONGAMENTO_COXA_PX, mask=livre | binaria)
+            binaria = ndimage.binary_dilation(binaria, iterations=ALONGAMENTO_COXA_PX, mask=livre | binaria)
+            xs_ponta = np.where(binaria[limite - 40 : limite + 1].any(axis=0))[0]
+            cx, rx = (xs_ponta.min() + xs_ponta.max()) / 2, (xs_ponta.max() - xs_ponta.min()) / 2 + 1
+            u = np.clip((np.arange(w) - cx) / rx, -1, 1)
+            corte_col = limite - ARCO_JOELHO_COXA_PX * np.sqrt(1 - u**2)
+            binaria = binaria & ~(np.arange(h)[:, None] > corte_col[None, :])
         if nome in LIMITE_LATERAL:
             x0f, x1f = LIMITE_LATERAL[nome]
             binaria = binaria.copy()
@@ -499,8 +710,16 @@ def main() -> None:
             binaria[int(LIMITE_INFERIOR[nome] * h) :, :] = False
         if nome in SUAVIZACAO_CONTORNO:
             binaria = _suavizar_contorno(binaria, SUAVIZACAO_CONTORNO[nome])
+        mascaras_finais[nome] = binaria
         salvar_mascara(
-            PASTA_SAIDA / f"{nome}.png", binaria, corpo_mask, h, w,
+            PASTA_SAIDA / f"{nome}.png", binaria,
+            corpo_mask | ~fundo_real
+            if nome in (
+                "right_thigh", "left_thigh", "right_forearm", "left_forearm",
+                "right_calf", "left_calf", *AUMENTO_EXTERNO_BRACO_OMBRO_PX,
+            )
+            else corpo_mask,
+            h, w,
             raio_fechamento=FECHAMENTO_EXTRA.get(nome, 4),
         )
         print(f"{nome}: {binaria.sum()} px -> {PASTA_SAIDA / f'{nome}.png'}")

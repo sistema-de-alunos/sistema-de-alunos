@@ -1,4 +1,4 @@
-"""Gera as máscaras de região do boneco FEMININO (`assets/corpos/corpomulher.png`).
+﻿"""Gera as máscaras de região do boneco FEMININO (`assets/corpos/corpomulher.png`).
 
 Irmã de `tools/gerar_mascaras_corpo.py` (o gerador do boneco masculino) —
 mesma técnica (segmentação watershed a partir de sementes calibradas
@@ -183,7 +183,17 @@ _VIZINHAS_CINTURA = ("chest", "abdomen", "hip", "right_arm", "left_arm")
 # intervalo tórax->quadril inteiro como antes -- isso é o que cria o "vão"
 # visível entre tórax/cintura/quadril (a cintura precisa PARECER uma faixa
 # estreita, não preencher todo o espaço disponível entre as duas).
-_CINTURA_Y0, _CINTURA_Y1 = 0.300, 0.365
+_CINTURA_Y0, _CINTURA_Y1 = 0.285, 0.365
+# Quanto (px) o meio do topo de cada lado da cintura desce (arco invertido).
+_CINTURA_ARCO_TOPO_PX = 22
+
+# Abdômen (ver `main()`): faixa de colunas (frações da largura) do reto
+# abdominal e até onde (fração da altura) ele desce sobre o quadril -- no
+# centro; o fundo é um arco (meia-elipse) que sobe `_ABDOMEN_ARCO_FUNDO_PX`
+# até as bordas. Antes era corte reto em 0.44, comendo o quadril.
+_ABDOMEN_X = (0.444, 0.558)
+_ABDOMEN_Y1 = 0.415
+_ABDOMEN_ARCO_FUNDO_PX = 50
 
 # Largura (fração da largura da imagem) da faixa, medida a partir da borda
 # externa do tronco pra dentro. Reduzida de 0.090 pra 0.038 (~39px): no
@@ -226,11 +236,18 @@ def _faixa_lateral_cintura(h: int, w: int, corpo_mask_cintura: np.ndarray, rotul
     largura_px = int(_CINTURA_LARGURA_FAIXA * w)
     faixa = np.zeros((h, w), dtype=bool)
     y0, y1 = int(_CINTURA_Y0 * h), int(_CINTURA_Y1 * h)
+    centro = w // 2
     for y in range(y0, y1):
-        xs = np.where(tronco_principal[y])[0]
-        if xs.size == 0:
+        # Borda do tronco = o trecho contínuo que passa pelo centro da
+        # imagem. Pegar o 1º/último pixel da linha inteira caía no
+        # antebraço, que nesta ilustração fica afastado do tronco.
+        linha = tronco_principal[y]
+        if not linha[centro]:
             continue
-        esquerda, direita = xs[0], xs[-1]
+        fora_esq = np.where(~linha[:centro])[0]
+        fora_dir = np.where(~linha[centro:])[0]
+        esquerda = fora_esq[-1] + 1 if fora_esq.size else 0
+        direita = centro + fora_dir[0] if fora_dir.size else w
         faixa[y, esquerda : esquerda + largura_px] = True
         faixa[y, max(esquerda, direita - largura_px) : direita] = True
     return faixa
@@ -330,6 +347,10 @@ def main() -> None:
     # fechamento+retângulo antigo -- recupera a franja sombreada do flanco
     # sem nunca criar um blob desconectado do corpo.
     corpo_mask_cintura = m_dilate(corpo_mask, morph_disk(RAIO_RECUPERAR_SOMBRA_CINTURA))
+    # ...mas nunca além do contorno real (alfa da imagem): a dilatação
+    # passava do tronco e a cintura "enganchava" no fundo ao lado.
+    corpo_real = np.array(Image.open(IMAGEM).convert("RGBA"))[..., 3] >= 128
+    corpo_mask_cintura &= corpo_real
 
     elevacao = sobel(gaussian(gray / 255.0, sigma=SIGMA_BLUR_ELEVACAO))
 
@@ -345,19 +366,72 @@ def main() -> None:
 
     rotulos_ws = watershed(elevacao, markers=marcadores, mask=corpo_mask, compactness=COMPACTNESS)
 
-    mascara_cintura_final = None  # preenchida ao processar "waist", usada por "hip" logo abaixo
+    # Calculada antes do loop porque "abdomen" (que vem antes em SEMENTES)
+    # também precisa dela: a faixa da cintura NÃO é mais cortada pelo
+    # abdômen -- é o abdômen que cede a faixa lateral pra cintura (o
+    # abdômen cobria quase todo o flanco e a cintura sobrava como um fio).
+    # O mesmo vale pro tórax (também antes em SEMENTES): a borda lateral de
+    # baixo dele cede espaço pra cintura subir até `_CINTURA_Y0`.
+    vizinhas = np.zeros_like(corpo_mask)
+    for vizinha in _VIZINHAS_CINTURA:
+        if vizinha not in ("abdomen", "chest"):
+            vizinhas |= rotulos_ws == nome_para_id[vizinha]
+    faixa = _faixa_lateral_cintura(h, w, corpo_mask_cintura, rotulos_ws, nome_para_id)
+    mascara_cintura_final = faixa & corpo_mask_cintura & ~vizinhas
+    # Topo em arco invertido: a faixa começa num corte reto em `_CINTURA_Y0`;
+    # em cada lado o corte vira um arco (parábola) -- nas bordas fica em Y0 e
+    # no meio da faixa desce `_CINTURA_ARCO_TOPO_PX`.
+    y0 = int(_CINTURA_Y0 * h)
+    linhas = np.arange(h)[:, None]
+    for lado in (slice(0, w // 2), slice(w // 2, w)):
+        parte = mascara_cintura_final[:, lado]
+        if not parte.any():
+            continue
+        # Topo real deste lado: 1ª linha em que a faixa já tem 80% da
+        # largura máxima (perto da axila o braço corta as primeiras linhas
+        # e sobram só alguns pixels soltos acima de onde ela começa de fato).
+        largura_linha = parte.sum(axis=1)
+        topo = max(y0, int(np.where(largura_linha >= 0.8 * largura_linha.max())[0].min()))
+        xs_topo = np.where(parte[topo : topo + 20].any(axis=0))[0]
+        cx, rx = (xs_topo.min() + xs_topo.max()) / 2, (xs_topo.max() - xs_topo.min()) / 2 + 1
+        u = np.clip((np.arange(parte.shape[1]) - cx) / rx, -1, 1)
+        # Parábola, não meia-elipse: a elipse é vertical nas pontas e só um
+        # fio de 1-2px subia nos cantos (apagado depois em `salvar_mascara`).
+        corte_col = topo + _CINTURA_ARCO_TOPO_PX * (1 - u**2)
+        parte &= ~(linhas < corte_col[None, :])
+
+    # Abdômen: embaixo ele se espalhava em "asas" laterais sob a cintura.
+    # Fica só na faixa de colunas do reto abdominal (`_ABDOMEN_X`) e desce
+    # até `_ABDOMEN_Y1`, tomando esse pedaço central do quadril (que depois
+    # desconta o abdômen).
+    mascara_abdomen_final = (
+        (rotulos_ws == nome_para_id["abdomen"])
+        | ((rotulos_ws == nome_para_id["hip"]) & (linhas < int(_ABDOMEN_Y1 * h)))
+    ) & ~mascara_cintura_final
+    mascara_abdomen_final[:, : int(_ABDOMEN_X[0] * w)] = False
+    mascara_abdomen_final[:, int(_ABDOMEN_X[1] * w) :] = False
+    # Fundo arredondado (ver `_ABDOMEN_ARCO_FUNDO_PX`); o que o arco corta do
+    # abdômen, dentro da faixa de colunas, vai pro quadril.
+    x0a, x1a = int(_ABDOMEN_X[0] * w), int(_ABDOMEN_X[1] * w)
+    u = np.clip((np.arange(w) - (x0a + x1a) / 2) / ((x1a - x0a) / 2), -1, 1)
+    fundo_col = _ABDOMEN_Y1 * h - _ABDOMEN_ARCO_FUNDO_PX * (1 - np.sqrt(1 - u**2))
+    abaixo_arco = linhas >= fundo_col[None, :]
+    abaixo_arco[:, :x0a] = False
+    abaixo_arco[:, x1a:] = False
+    abaixo_arco[: int(_CINTURA_Y0 * h)] = False
+    sobra_para_quadril = abaixo_arco & (rotulos_ws == nome_para_id["abdomen"])
+    mascara_abdomen_final &= ~abaixo_arco
 
     for nome in nomes:
         if nome.startswith("ignore"):
             continue
         idx = nome_para_id[nome]
         if nome == "waist":
-            vizinhas = np.zeros_like(corpo_mask)
-            for vizinha in _VIZINHAS_CINTURA:
-                vizinhas |= rotulos_ws == nome_para_id[vizinha]
-            faixa = _faixa_lateral_cintura(h, w, corpo_mask_cintura, rotulos_ws, nome_para_id)
-            binaria = faixa & corpo_mask_cintura & ~vizinhas
-            mascara_cintura_final = binaria
+            binaria = mascara_cintura_final
+        elif nome == "chest":
+            binaria = (rotulos_ws == idx) & ~mascara_cintura_final
+        elif nome == "abdomen":
+            binaria = mascara_abdomen_final
         elif nome == "hip":
             # Sem o polígono manual que "waist" usa, o resultado bruto do
             # watershed para "hip" ainda reivindica um pedaço do flanco
@@ -369,10 +443,14 @@ def main() -> None:
             # aqui -- junto dos braços, mesmo raciocínio -- corrige o
             # vazamento na raiz em vez de só cortar reto com LIMITE_LATERAL.
             binaria = (
-                (rotulos_ws == idx)
+                ((rotulos_ws == idx) | sobra_para_quadril)
                 & ~mascara_cintura_final
+                & ~mascara_abdomen_final
                 & ~(rotulos_ws == nome_para_id["right_arm"])
                 & ~(rotulos_ws == nome_para_id["left_arm"])
+                # O fechamento da silhueta criava uma ponta sobre o fundo no
+                # canto superior externo; recorta pelo contorno real.
+                & corpo_real
             )
         else:
             binaria = rotulos_ws == idx
