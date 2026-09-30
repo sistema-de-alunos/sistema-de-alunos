@@ -233,7 +233,9 @@ ZONAS_EXCLUSAO_FECHAMENTO = [
 # referencia continuar funcionando sem alterações).
 LIMITE_LATERAL: dict = {}
 
-LIMITE_SUPERIOR: dict = {}
+# Topo das coxas reto (pedido: lados retos, não arredondados, abaixo do
+# corte reto do quadril em `LIMITE_INFERIOR`).
+LIMITE_SUPERIOR: dict = {"right_thigh": 0.492, "left_thigh": 0.492}
 
 # HISTÓRICO: "left_forearm" tinha um corte reto aqui (`LIMITE_INFERIOR`,
 # y=0.478) para um vazamento perto do punho -- dentro de
@@ -249,7 +251,8 @@ LIMITE_SUPERIOR: dict = {}
 # cortar uma faixa reta na máscara já pronta. `LIMITE_INFERIOR` fica vazio
 # de propósito, pela mesma razão de `LIMITE_LATERAL`/`LIMITE_SUPERIOR`
 # acima.
-LIMITE_INFERIOR: dict = {}
+# Fundo do quadril reto (pedido: a parte de baixo arredondada descia demais).
+LIMITE_INFERIOR: dict = {"hip": 0.475}
 
 # "hip" tem um problema geométrico diferente de jaggedness: bem no canto de
 # `ZONAS_EXCLUSAO_FECHAMENTO` (onde o fechamento da silhueta é desligado
@@ -286,6 +289,11 @@ SUAVIZACAO_CONTORNO = {
 # deixar a ligação mais grossa.
 PONTE_QUADRIL_Y = (0.412, 0.448)
 _DOADORAS_PONTE_QUADRIL = ("abdomen", "right_thigh", "left_thigh")
+# Quanto (px) a borda externa do quadril fica pra dentro do corpo real.
+QUADRIL_RECUO_EXTERNO_PX = 4
+# Depois das coxas prontas, o fundo reto do quadril (`LIMITE_INFERIOR`) desce
+# até este tanto (px) pela pele livre, até encostar nas coxas (ver `main()`).
+DESCIDA_QUADRIL_PX = 80
 
 # O fechamento da silhueta solda o vão entre as pernas (ver comentário de
 # `ZONAS_EXCLUSAO_FECHAMENTO`) e as coxas herdavam esse fundo como lateral
@@ -312,6 +320,21 @@ AUMENTO_EXTERNO_COXA = [
 # Quanto (px) braço e ombro crescem pra fora, sobre a borda escura da pele
 # que a silhueta deixa de fora (ver uso em `main()`).
 AUMENTO_EXTERNO_BRACO_OMBRO_PX = {"right_arm": 5, "left_arm": 5, "shoulder": 5}
+# Quanto (px) o fundo do braço fica acima do topo do antebraço.
+RECUO_INFERIOR_BRACO_PX = 22
+# Raio (px) do fechamento que tapa falhas na borda interna do braço.
+FALHA_INTERNA_BRACO_PX = 10
+# Quanto (px) a borda interna do braço fica afastada das máscaras finais da
+# cintura e do peito (o braço direito invadia os dois).
+RECUO_BRACO_CINTURA_PX = {"right_arm": 8}
+# O canto superior externo da cintura direita (lado esquerdo da imagem)
+# ficava cortado pelo peito, com uma faixa de pele sem máscara entre braço e
+# peito. A cintura sobe/cresce até este tanto (px) só sobre pele que não é
+# de nenhuma outra máscara final.
+SUBIDA_CINTURA_DIREITA_PX = 25
+# A ponta de baixo da cintura parava antes do quadril, com pele sem máscara
+# entre os dois. Ela desce até este tanto (px), só sobre pele livre.
+DESCIDA_CINTURA_PX = 40
 
 # O antebraço terminava no meio: a metade de baixo (até o punho) é da mão
 # ("ignore_hand_*"). Ele cresce este tanto (px) pra baixo, só a partir da
@@ -320,6 +343,8 @@ ALONGAMENTO_ANTEBRACO_PX = 42
 ALONGAMENTO_ANTEBRACO_Y0 = 0.42
 # Alcance (px) do preenchimento da borda interna do antebraço (ver `main()`).
 BORDA_INTERNA_ANTEBRACO_PX = 12
+# Alcance (px) do preenchimento da metade externa do antebraço (ver `main()`).
+PREENCHIMENTO_EXTERNO_ANTEBRACO_PX = 30
 
 # Quanto (px) o topo das panturrilhas desce (corte por altura, ver `main()`).
 RECUO_TOPO_PANTURRILHA_PX = 85
@@ -332,6 +357,14 @@ ARREDONDAMENTO_TOPO_PANTURRILHA_PX = 30
 # meio sobe em arco em volta do joelho.
 ALONGAMENTO_COXA_PX = 20
 ARCO_JOELHO_COXA_PX = 30
+# Quanto (px) o topo das coxas fica afastado da máscara final do quadril.
+RECUO_COXA_QUADRIL_PX = 8
+# Topo das coxas em arco: quanto (px) os cantos descem em relação ao meio, e
+# quanto o canto interno (virilha) desce a mais.
+ARCO_TOPO_COXA_PX = 20
+RECUO_TOPO_INTERNO_COXA_PX = {"right_thigh": 80, "left_thigh": 110}
+# Distância mínima (px) de cada coxa até a linha central da imagem.
+FOLGA_ENTRE_COXAS_PX = 10
 
 
 def _suavizar_contorno(binaria: np.ndarray, raio: int, tamanho_minimo: int = 1000) -> np.ndarray:
@@ -540,6 +573,7 @@ def main() -> None:
     # Ver `FAIXA_INTERNA_COXAS_X`.
     fundo_real = np.array(Image.open(IMAGEM).convert("RGBA"))[..., 3] < 128
     dist_ao_corpo = ndimage.distance_transform_edt(fundo_real)
+    dist_ao_fundo = ndimage.distance_transform_edt(~fundo_real)
     fundo_entre_pernas = fundo_real.copy()
     fundo_entre_pernas[:, : int(FAIXA_INTERNA_COXAS_X[0] * w)] = False
     fundo_entre_pernas[:, int(FAIXA_INTERNA_COXAS_X[1] * w) :] = False
@@ -569,7 +603,9 @@ def main() -> None:
         else:
             binaria = rotulos_ws == idx
         if nome == "hip":
-            binaria = binaria | ponte_quadril
+            # O fechamento da silhueta estende a lateral externa sobre o
+            # fundo; recorta pelo alfa real, recuando QUADRIL_RECUO_EXTERNO_PX.
+            binaria = (binaria | ponte_quadril) & (dist_ao_fundo > QUADRIL_RECUO_EXTERNO_PX)
         elif nome in _DOADORAS_PONTE_QUADRIL:
             binaria = binaria & ~ponte_quadril
         if nome in ("right_arm", "left_arm"):
@@ -582,6 +618,40 @@ def main() -> None:
             if n_pedacos > 1:
                 tamanhos = ndimage.sum(binaria, rotulos_braco, range(1, n_pedacos + 1))
                 binaria = rotulos_braco == int(np.argmax(tamanhos)) + 1
+            # Tapa mordidas pequenas na borda interna (perto da cintura),
+            # só sobre pele real que não é de outra região. A "waist" do
+            # watershed mordia o braço ali, mas a cintura final é o polígono
+            # (já pronto em `mascaras_finais`) -- vale ele, não o watershed.
+            outras = np.isin(rotulos_ws, [
+                nome_para_id[n] for n in nomes
+                if n not in (nome, "waist") and not n.startswith("ignore")
+            ]) | mascaras_finais["waist"]
+            fechado = m_close(binaria, morph_disk(FALHA_INTERNA_BRACO_PX))
+            binaria = binaria | (fechado & ~fundo_real & ~outras)
+            # Ver `RECUO_BRACO_CINTURA_PX`.
+            if RECUO_BRACO_CINTURA_PX.get(nome):
+                perto_cintura = ndimage.binary_dilation(
+                    mascaras_finais["waist"] | mascaras_finais["chest"], morph_disk(RECUO_BRACO_CINTURA_PX[nome])
+                )
+                binaria = binaria & ~perto_cintura
+            # A ponta de baixo descia pela borda interna, sobre o antebraço.
+            # Corta abaixo do topo do antebraço, coluna a coluna (fora das
+            # colunas dele, corta na altura do ponto mais alto desse topo),
+            # subindo RECUO_INFERIOR_BRACO_PX -- só na metade externa. Na
+            # metade interna (lado do tronco) desce até o topo do antebraço,
+            # senão sobra um canto sem máscara acima do cotovelo -- mas sem
+            # passar da altura típica desse topo nas 30 colunas mais internas
+            # (na ponta o topo despenca e o braço escorria ao lado dele).
+            antebraco = rotulos_ws == nome_para_id[nome.replace("arm", "forearm")]
+            cols = np.where(antebraco.any(axis=0))[0]
+            topo = antebraco[:, cols].argmax(axis=0)
+            x = np.arange(w)
+            corte_col = np.interp(x, cols, topo, left=topo.min(), right=topo.min()) - RECUO_INFERIOR_BRACO_PX
+            cx = np.where(binaria.any(axis=0))[0].mean()
+            interno = (x > cx) if cx < w // 2 else (x < cx)
+            nivel = np.median(topo[-30:] if cx < w // 2 else topo[:30])
+            corte_col[interno] = np.minimum(np.interp(x, cols, topo), nivel)[interno]
+            binaria = binaria & (np.arange(h)[:, None] < corte_col[None, :])
         if nome in ("right_forearm", "left_forearm"):
             # Ver `ALONGAMENTO_ANTEBRACO_PX`: cresce "por dentro" do braço
             # desenhado (dilatação geodésica), só sobre pele que é da mão
@@ -623,6 +693,15 @@ def main() -> None:
                 lado_tronco[:, :cx] = True
             extra = ndimage.binary_dilation(binaria, morph_disk(BORDA_INTERNA_ANTEBRACO_PX))
             binaria = binaria | (extra & lado_tronco & ~fundo_real & ~bloqueadas)
+            # O braço recuou (`RECUO_INFERIOR_BRACO_PX`) e sobrou uma faixa
+            # sem máscara acima do antebraço, além da borda escura de fora.
+            # O antebraço sobe/cresce sobre essa pele livre até encostar no
+            # braço, sem descer além do próprio fundo.
+            livre_ext = ~fundo_real & ~bloqueadas
+            livre_ext[np.where(binaria.any(axis=1))[0].max() + 1 :] = False
+            binaria = ndimage.binary_dilation(
+                binaria, iterations=PREENCHIMENTO_EXTERNO_ANTEBRACO_PX, mask=livre_ext | binaria
+            )
             binaria = ndimage.binary_fill_holes(binaria)
         if nome in ("right_calf", "left_calf"):
             # O fechamento da silhueta solda o vão entre as canelas e as duas
@@ -697,6 +776,45 @@ def main() -> None:
             u = np.clip((np.arange(w) - cx) / rx, -1, 1)
             corte_col = limite - ARCO_JOELHO_COXA_PX * np.sqrt(1 - u**2)
             binaria = binaria & ~(np.arange(h)[:, None] > corte_col[None, :])
+            # A parte de cima subia colada no quadril (faixa ao lado da "asa"
+            # externa e topo perto da virilha): recua RECUO_COXA_QUADRIL_PX da
+            # máscara final do quadril e fica só com o maior pedaço.
+            binaria = binaria & ~ndimage.binary_dilation(
+                mascaras_finais["hip"], morph_disk(RECUO_COXA_QUADRIL_PX)
+            )
+            # Com o fundo do quadril cortado reto (`LIMITE_INFERIOR`), sobra
+            # pele sem máscara no canto superior externo da coxa (onde descia
+            # a "asa" do quadril): a coxa cresce sobre ela até o topo reto
+            # (`LIMITE_SUPERIOR`), sem tocar outras regiões.
+            ocupado_coxa = np.isin(rotulos_ws, [
+                nome_para_id[n] for n in nomes
+                if n != nome and not n.startswith("ignore") and n not in mascaras_finais
+            ])
+            for m in mascaras_finais.values():
+                ocupado_coxa |= m
+            livre_topo = ~fundo_real & ~ocupado_coxa
+            livre_topo[: int(LIMITE_SUPERIOR.get(nome, 0) * h)] = False
+            livre_topo[int(0.56 * h) :] = False
+            binaria = ndimage.binary_dilation(binaria, iterations=40, mask=livre_topo | binaria)
+            # As duas coxas se tocavam na virilha: cada uma fica a
+            # FOLGA_ENTRE_COXAS_PX da linha central (antes do arco abaixo, pra
+            # ele arredondar já a partir da borda nova).
+            binaria[:, w // 2 - FOLGA_ENTRE_COXAS_PX : w // 2 + FOLGA_ENTRE_COXAS_PX] = False
+            # Topo em arco (espelho do joelho): o meio fica na linha reta de
+            # `LIMITE_SUPERIOR` e os cantos descem `ARCO_TOPO_COXA_PX`; o
+            # canto interno (virilha) desce mais `RECUO_TOPO_INTERNO_COXA_PX`.
+            topo_coxa = int(LIMITE_SUPERIOR.get(nome, 0) * h)
+            xs_topo = np.where(binaria[topo_coxa : topo_coxa + 40].any(axis=0))[0]
+            cx, rx = (xs_topo.min() + xs_topo.max()) / 2, (xs_topo.max() - xs_topo.min()) / 2 + 1
+            u = np.clip((np.arange(w) - cx) / rx, -1, 1)
+            corte_col = topo_coxa + ARCO_TOPO_COXA_PX * (1 - np.sqrt(1 - u**2))
+            interno = u > 0 if cx < w // 2 else u < 0
+            corte_col[interno] += RECUO_TOPO_INTERNO_COXA_PX[nome] * np.abs(u[interno]) ** 2
+            binaria = binaria & (np.arange(h)[:, None] >= corte_col[None, :])
+            rotulos_coxa, n_pedacos = ndimage.label(binaria)
+            if n_pedacos > 1:
+                tamanhos = ndimage.sum(binaria, rotulos_coxa, range(1, n_pedacos + 1))
+                binaria = rotulos_coxa == int(np.argmax(tamanhos)) + 1
         if nome in LIMITE_LATERAL:
             x0f, x1f = LIMITE_LATERAL[nome]
             binaria = binaria.copy()
@@ -723,6 +841,66 @@ def main() -> None:
             raio_fechamento=FECHAMENTO_EXTRA.get(nome, 4),
         )
         print(f"{nome}: {binaria.sum()} px -> {PASTA_SAIDA / f'{nome}.png'}")
+
+    # Ver `DESCIDA_QUADRIL_PX`. Roda depois das coxas (que usam o quadril
+    # cortado reto pra se afastar dele) e antes da cintura (que encosta no
+    # quadril final).
+    quadril = mascaras_finais["hip"]
+    outras_finais = np.zeros_like(quadril)
+    for n, m in mascaras_finais.items():
+        if n != "hip":
+            outras_finais |= m
+    livre_quadril = (dist_ao_fundo > QUADRIL_RECUO_EXTERNO_PX) & ~outras_finais
+    livre_quadril[: np.where(quadril.any(axis=1))[0].max() - 5] = False
+    quadril = ndimage.binary_dilation(
+        quadril, iterations=DESCIDA_QUADRIL_PX, mask=livre_quadril | quadril
+    )
+    # Tapa os buracos que ficam fechados dentro dele (onde antes subiam os
+    # topos das coxas), só sobre pele livre.
+    quadril = quadril | (ndimage.binary_fill_holes(quadril) & ~outras_finais & ~fundo_real)
+    mascaras_finais["hip"] = quadril
+    salvar_mascara(PASTA_SAIDA / "hip.png", quadril, corpo_mask, h, w, raio_fechamento=4)
+
+    # Ver `SUBIDA_CINTURA_DIREITA_PX`. Roda depois de tudo porque a faixa
+    # livre só existe depois que o braço recua (`RECUO_BRACO_CINTURA_PX`).
+    cintura = mascaras_finais["waist"]
+    ocupado = np.zeros_like(cintura)
+    for n, m in mascaras_finais.items():
+        if n != "waist":
+            ocupado |= m
+    livre = ~fundo_real & ~ndimage.binary_dilation(ocupado, iterations=5)
+    # Só a metade externa (lado do braço) da cintura direita.
+    livre[:, int(np.where(cintura[:, : w // 2].any(axis=0))[0].mean()) :] = False
+    livre[: np.where(cintura[:, : w // 2].any(axis=1))[0].min() - SUBIDA_CINTURA_DIREITA_PX] = False
+    cintura = ndimage.binary_dilation(
+        cintura, iterations=SUBIDA_CINTURA_DIREITA_PX, mask=livre | cintura
+    )
+    # Ver `DESCIDA_CINTURA_PX`: cada lado cresce pela pele livre -- desce até
+    # perto do quadril e tapa as falhas da borda interna (lado do abdômen) --
+    # sem subir acima do próprio topo. Depois um fechamento alisa a borda
+    # serrilhada, também só sobre pele livre.
+    # Abdômen e quadril sem folga (a cintura encosta neles, sem listra de
+    # pele entre as máscaras); as outras vizinhas mantêm 3px de folga.
+    colado = mascaras_finais["abdomen"] | mascaras_finais["hip"]
+    livre_baixo = ~fundo_real & ~colado & ~ndimage.binary_dilation(ocupado & ~colado, iterations=3)
+    for lado in (slice(0, w // 2), slice(w // 2, w)):
+        livre_lado = np.zeros_like(livre_baixo)
+        livre_lado[:, lado] = livre_baixo[:, lado]
+        livre_lado[: np.where(cintura[:, lado].any(axis=1))[0].min()] = False
+        cintura = ndimage.binary_dilation(
+            cintura, iterations=DESCIDA_CINTURA_PX, mask=livre_lado | cintura
+        )
+    cintura = cintura | (m_close(cintura, morph_disk(8)) & livre_baixo)
+    cintura = ndimage.binary_fill_holes(cintura)
+    # A cintura esquerda (lado direito da imagem) vazava do corpo ao lado do
+    # braço (a silhueta fechada cobre o vão ali): recorta pelo alfa real.
+    limite = corpo_mask | ~fundo_real
+    limite[:, w // 2 :] = ~fundo_real[:, w // 2 :]
+    cintura = cintura & limite
+    salvar_mascara(
+        PASTA_SAIDA / "waist.png", cintura, limite, h, w,
+        raio_fechamento=FECHAMENTO_EXTRA.get("waist", 4),
+    )
 
     # visualização de depuração: cada região com uma cor diferente, pra
     # conferir rapidamente antes de confiar nos PNGs finais.
