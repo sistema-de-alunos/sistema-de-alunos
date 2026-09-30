@@ -208,6 +208,22 @@ _CINTURA_LARGURA_FAIXA = 0.038
 # pra dentro do torso e picotava a borda externa detectada linha a linha.
 _CINTURA_DILATACAO_EXCLUSAO_BRACO = 3
 
+# Quanto (px) cada região cresce sobre a pele sem dono ao redor (ver `main()`).
+_EXPANSAO_PX = {"right_arm": 18, "left_arm": 18, "shoulder": 10}
+# Idem para as laterais do quadril (ramo próprio em `main()`).
+_QUADRIL_EXPANSAO_PX = 8
+# Ponta de baixo das coxas (ver `main()`): quanto sobe e quanto o arco
+# arredondado sobe do centro até as laterais.
+_COXA_RECUO_FUNDO_PX = 15
+_COXA_ARCO_FUNDO_PX = 25
+# Quanto (px), no máximo, o lado externo das coxas cresce (do meio pra baixo).
+_COXA_EXPANSAO_EXTERNA_PX = 8
+# Quanto (px) o topo reto do quadril desce da borda externa até o abdômen.
+_QUADRIL_TOPO_INCLINACAO_PX = 14
+
+# Quanto (px) a borda de baixo do tórax sobe (ver `main()`).
+_TORAX_RECUO_FUNDO_PX = 3
+
 
 def _faixa_lateral_cintura(h: int, w: int, corpo_mask_cintura: np.ndarray, rotulos_ws: np.ndarray, nome_para_id: dict) -> np.ndarray:
     """Faixa lateral (os dois flancos) derivada da silhueta real do tronco.
@@ -422,6 +438,7 @@ def main() -> None:
     sobra_para_quadril = abaixo_arco & (rotulos_ws == nome_para_id["abdomen"])
     mascara_abdomen_final &= ~abaixo_arco
 
+    ja_expandido = np.zeros((h, w), dtype=bool)
     for nome in nomes:
         if nome.startswith("ignore"):
             continue
@@ -429,7 +446,16 @@ def main() -> None:
         if nome == "waist":
             binaria = mascara_cintura_final
         elif nome == "chest":
-            binaria = (rotulos_ws == idx) & ~mascara_cintura_final
+            # Recorta pelo contorno real: o fechamento da silhueta levava os
+            # cantos de baixo (sob o peito) sobre o fundo.
+            binaria = (rotulos_ws == idx) & ~mascara_cintura_final & corpo_real
+            # A borda de baixo descia além da dobra sob o peito (sobre as
+            # costelas); sobe `_TORAX_RECUO_FUNDO_PX` em cada coluna.
+            abaixo = np.zeros_like(binaria)
+            abaixo[:-_TORAX_RECUO_FUNDO_PX] = binaria[_TORAX_RECUO_FUNDO_PX:]
+            binaria &= abaixo
+            # Tira as pontinhas finas que sobravam embaixo.
+            binaria = m_open(binaria, morph_disk(6))
         elif nome == "abdomen":
             binaria = mascara_abdomen_final
         elif nome == "hip":
@@ -452,6 +478,117 @@ def main() -> None:
                 # canto superior externo; recorta pelo contorno real.
                 & corpo_real
             )
+            # Laterais: a pele em sombra da borda do quadril ficava de fora;
+            # mesmo crescimento de `_EXPANSAO_PX`, só sobre pele sem dono.
+            livre = (
+                corpo_real
+                & ~mascara_cintura_final
+                & ~mascara_abdomen_final
+                & ~ja_expandido
+                & ~np.isin(
+                    rotulos_ws, [i for n, i in nome_para_id.items() if not n.startswith("ignore") and n != nome]
+                )
+            )
+            binaria |= m_dilate(binaria, morph_disk(_QUADRIL_EXPANSAO_PX)) & livre
+            # Topo reto: entre o fim da cintura e o quadril sobrava uma faixa
+            # sem dono e o topo saía cheio de "espinhos". Em cada lado (fora
+            # da faixa do abdômen) o topo vira uma reta que começa colada no
+            # fim da cintura, na borda externa, e desce
+            # `_QUADRIL_TOPO_INCLINACAO_PX` até o abdômen; acima dela sai do
+            # quadril, abaixo dela a pele livre entra ("waist"/"abdomen"
+            # brutos contam como livres -- as máscaras finais delas, já
+            # excluídas acima, não usam essa faixa).
+            livre_topo = (
+                corpo_real
+                & ~mascara_cintura_final
+                & ~mascara_abdomen_final
+                & ~ja_expandido
+                & ~np.isin(
+                    rotulos_ws,
+                    [i for n, i in nome_para_id.items() if not n.startswith("ignore") and n not in (nome, "waist", "abdomen")],
+                )
+            )
+            y_topo = int(_CINTURA_Y1 * h)
+            linha_topo = corpo_real[y_topo]
+            centro = w // 2
+            borda_esq = np.where(~linha_topo[:centro])[0][-1] + 1
+            borda_dir = centro + np.where(~linha_topo[centro:])[0][0] - 1
+            for x_fora, x_abd in ((borda_esq, x0a), (borda_dir, x1a)):
+                colunas = range(min(x_fora, x_abd), max(x_fora, x_abd) + 1)
+                for x in colunas:
+                    y_reta = int(round(y_topo + _QUADRIL_TOPO_INCLINACAO_PX * (x - x_fora) / (x_abd - x_fora)))
+                    binaria[:y_reta, x] = False
+                    abaixo = np.where(binaria[y_reta:, x])[0]
+                    if abaixo.size:
+                        faixa = slice(y_reta, y_reta + abaixo[0])
+                        binaria[faixa, x] = livre_topo[faixa, x]
+            ja_expandido |= binaria
+        elif nome in ("right_thigh", "left_thigh"):
+            binaria = (rotulos_ws == idx) & corpo_real
+            # Lado interno: a pele em sombra até a borda real da perna ficava
+            # sem dono; em cada linha preenche só na direção do centro.
+            livre = corpo_real & ~np.isin(
+                rotulos_ws, [i for n, i in nome_para_id.items() if not n.startswith("ignore") and n != nome]
+            )
+            passo = 1 if nome == "right_thigh" else -1
+            for y in np.where(binaria.any(axis=1))[0]:
+                xs = np.where(binaria[y])[0]
+                x = xs[-1] if passo == 1 else xs[0]
+                inicio = x
+                while 0 < x < w - 1 and livre[y, x + passo]:
+                    x += passo
+                binaria[y, min(inicio, x) : max(inicio, x) + 1] = True
+            # Lado externo, só do meio pra baixo (a parte de cima encosta no
+            # quadril): cresce até `_COXA_EXPANSAO_EXTERNA_PX` sobre pele sem
+            # dono, na direção de fora.
+            linhas_coxa = np.where(binaria.any(axis=1))[0]
+            y_meio = linhas_coxa.min() + int(0.3 * (linhas_coxa.max() - linhas_coxa.min()))
+            for y in linhas_coxa[linhas_coxa >= y_meio]:
+                xs = np.where(binaria[y])[0]
+                x = xs[0] if passo == 1 else xs[-1]
+                for _ in range(_COXA_EXPANSAO_EXTERNA_PX):
+                    if not (0 < x < w - 1 and livre[y, x - passo]):
+                        break
+                    x -= passo
+                    binaria[y, x] = True
+            # Ponta de baixo: sobe `_COXA_RECUO_FUNDO_PX` e vira um arco
+            # (meia-elipse) que sobe `_COXA_ARCO_FUNDO_PX` até as laterais.
+            y_fim = np.where(binaria.any(axis=1))[0].max() - _COXA_RECUO_FUNDO_PX
+            xs = np.where(binaria[y_fim - _COXA_ARCO_FUNDO_PX])[0]
+            x0c, x1c = xs.min(), xs.max()
+            u = np.clip((np.arange(w) - (x0c + x1c) / 2) / ((x1c - x0c) / 2), -1, 1)
+            fundo_col = y_fim - _COXA_ARCO_FUNDO_PX * (1 - np.sqrt(1 - u**2))
+            binaria &= linhas < fundo_col[None, :]
+        elif nome in _EXPANSAO_PX:
+            # As bordas (pele em sombra, sem dono no watershed) ficavam de
+            # fora; cresce `_EXPANSAO_PX` só sobre pele que não é de outra
+            # região.
+            livre = corpo_real & ~np.isin(
+                rotulos_ws, [i for n, i in nome_para_id.items() if not n.startswith("ignore") and n != nome]
+            )
+            # `ja_expandido`: a pele sem dono fica com quem cresceu antes
+            # (ombro antes dos braços), sem as duas máscaras se sobreporem.
+            binaria = m_dilate(rotulos_ws == idx, morph_disk(_EXPANSAO_PX[nome])) & livre & ~ja_expandido
+            ja_expandido |= binaria
+        elif nome in ("right_forearm", "left_forearm"):
+            # Mesmo caso do quadril: o fechamento da silhueta estendia a
+            # ponta inferior sobre o fundo; recorta pelo contorno real.
+            binaria = (rotulos_ws == idx) & corpo_real
+            # A borda interna de baixo ficava com a semente da mão (o
+            # watershed cortava em diagonal). Em cada linha, preenche até as
+            # bordas reais do braço -- só a pele contígua, sem tomar outra
+            # região.
+            livre = corpo_real & ~np.isin(
+                rotulos_ws, [i for n, i in nome_para_id.items() if not n.startswith("ignore") and n != nome]
+            )
+            for y in np.where(binaria.any(axis=1))[0]:
+                xs = np.where(binaria[y])[0]
+                a, b = xs[0], xs[-1]
+                while a > 0 and livre[y, a - 1]:
+                    a -= 1
+                while b < w - 1 and livre[y, b + 1]:
+                    b += 1
+                binaria[y, a : b + 1] = livre[y, a : b + 1]
         else:
             binaria = rotulos_ws == idx
         if nome in LIMITE_LATERAL:
@@ -473,6 +610,13 @@ def main() -> None:
         # limiar de silhueta com o raio padrão, então recortar por
         # `corpo_mask` derrubaria a máscara de volta a quase nada.
         mascara_final = corpo_mask_cintura if nome == "waist" else corpo_mask
+        # A borda interna do antebraço é pele em sombra (gray<100), fora de
+        # `corpo_mask`; o antebraço já foi recortado por `corpo_real` acima.
+        # Coxas: o fechamento da silhueta (raio 40) soldava o vão real entre
+        # as pernas logo abaixo da virilha, e as duas coxas se encontravam
+        # por cima dele; pelo contorno real cada uma para na própria borda.
+        if nome in ("right_forearm", "left_forearm", "hip", "right_thigh", "left_thigh") or nome in _EXPANSAO_PX:
+            mascara_final = corpo_real
         salvar_mascara(
             PASTA_SAIDA / f"{nome}.png", binaria, mascara_final, h, w,
             raio_fechamento=FECHAMENTO_EXTRA.get(nome, 4),

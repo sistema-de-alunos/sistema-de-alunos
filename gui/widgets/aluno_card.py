@@ -7,8 +7,10 @@ from core.qt_core import (
     QIcon,
     QLabel,
     QPainter,
+    QPainterPath,
     QPixmap,
     QPushButton,
+    QRectF,
     Qt,
     QSize,
     QSvgRenderer,
@@ -33,9 +35,19 @@ _SVG_LIXEIRA = """
 """
 
 
-def _icone_lixeira(cor: str, tamanho: int = 18) -> QIcon:
-    """Renderiza o ícone de lixeira acima na cor pedida, como QIcon."""
-    svg = _SVG_LIXEIRA.format(cor=cor)
+# Lápis no mesmo traço fino da lixeira (editar a foto de perfil).
+_SVG_LAPIS = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+     stroke="{cor}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 20h9"></path>
+    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path>
+</svg>
+"""
+
+
+def _icone_svg(svg_modelo: str, cor: str, tamanho: int = 18) -> QIcon:
+    """Renderiza um dos ícones SVG acima na cor pedida, como QIcon."""
+    svg = svg_modelo.format(cor=cor)
     renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
     pixmap = QPixmap(tamanho, tamanho)
     pixmap.fill(Qt.transparent)
@@ -43,6 +55,51 @@ def _icone_lixeira(cor: str, tamanho: int = 18) -> QIcon:
     renderer.render(painter)
     painter.end()
     return QIcon(pixmap)
+
+
+# Ajuste da foto de perfil: (zoom, x, y). zoom 1 = a foto cobre o círculo
+# justo; x/y = ponto da foto (fração 0-1 da largura/altura) que fica no
+# centro do círculo. Independe do tamanho, então vale igual no card (52px) e
+# na janela de ajuste.
+AJUSTE_PADRAO = (1.0, 0.5, 0.5)
+
+
+def ler_ajuste(texto) -> tuple:
+    """"zoom,x,y" salvo no banco -> tupla; padrão se vazio ou inválido."""
+    try:
+        zoom, x, y = (float(v) for v in texto.split(","))
+        return (max(zoom, 1.0), x, y)
+    except (AttributeError, ValueError):
+        return AJUSTE_PADRAO
+
+
+def geometria_foto(largura: int, altura: int, tamanho: int, ajuste: tuple) -> tuple:
+    """Retângulo (x, y, largura, altura) onde desenhar a foto num quadrado de
+    `tamanho` px, já com x/y limitados para a foto nunca deixar o círculo
+    com buraco."""
+    zoom, cx, cy = ajuste
+    escala = max(tamanho / largura, tamanho / altura) * zoom
+    lw, lh = largura * escala, altura * escala
+    meio_x, meio_y = tamanho / 2 / lw, tamanho / 2 / lh
+    cx = min(max(cx, meio_x), 1 - meio_x)
+    cy = min(max(cy, meio_y), 1 - meio_y)
+    return (tamanho / 2 - cx * lw, tamanho / 2 - cy * lh, lw, lh)
+
+
+def recortar_circulo(original: QPixmap, tamanho: int, ajuste: tuple = AJUSTE_PADRAO) -> QPixmap:
+    """A foto posicionada por `ajuste`, recortada num círculo de `tamanho` px."""
+    x, y, lw, lh = geometria_foto(original.width(), original.height(), tamanho, ajuste)
+    resultado = QPixmap(tamanho, tamanho)
+    resultado.fill(Qt.transparent)
+    painter = QPainter(resultado)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setRenderHint(QPainter.SmoothPixmapTransform)
+    recorte = QPainterPath()
+    recorte.addEllipse(0, 0, tamanho, tamanho)
+    painter.setClipPath(recorte)
+    painter.drawPixmap(QRectF(x, y, lw, lh), original, QRectF(original.rect()))
+    painter.end()
+    return resultado
 
 
 def _iniciais(nome_completo: str) -> str:
@@ -54,16 +111,16 @@ def _iniciais(nome_completo: str) -> str:
     return (partes[0][0] + partes[-1][0]).upper()
 
 
-class _BotaoExcluir(QPushButton):
-    """Ícone de excluir do card: SVG minimalista, com leve troca de cor no hover."""
+class _BotaoIcone(QPushButton):
+    """Ícone de ação do card: SVG minimalista, com leve troca de cor no hover."""
 
-    def __init__(self, parent=None):
+    def __init__(self, svg_modelo: str, cor_hover: str, fundo_hover: str, dica: str, parent=None):
         super().__init__(parent)
-        self._icone_normal = _icone_lixeira(Cores.TEXTO_SECUNDARIO)
-        self._icone_hover = _icone_lixeira(Cores.ERRO)
+        self._icone_normal = _icone_svg(svg_modelo, Cores.TEXTO_SECUNDARIO)
+        self._icone_hover = _icone_svg(svg_modelo, cor_hover)
         self.setIcon(self._icone_normal)
         self.setIconSize(QSize(18, 18))
-        self.setToolTip("Excluir aluno")
+        self.setToolTip(dica)
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedSize(36, 36)
         self.setStyleSheet(
@@ -74,10 +131,10 @@ class _BotaoExcluir(QPushButton):
                 border-radius: 8px;
             }}
             QPushButton:hover {{
-                background-color: {Cores.ERRO_FUNDO};
+                background-color: {fundo_hover};
             }}
             QPushButton:pressed {{
-                background-color: {Cores.ERRO_FUNDO};
+                background-color: {fundo_hover};
             }}
             """
         )
@@ -96,8 +153,11 @@ class AlunoCard(QFrame):
 
     clicado = Signal(int)
     excluir_solicitado = Signal(int)
+    editar_foto_solicitado = Signal(int)
 
-    def __init__(self, aluno_id: int, nome_completo: str, parent=None):
+    def __init__(
+        self, aluno_id: int, nome_completo: str, foto_perfil=None, foto_perfil_ajuste=None, parent=None
+    ):
         super().__init__(parent)
         self._aluno_id = aluno_id
         self.setCursor(Qt.PointingHandCursor)
@@ -134,6 +194,9 @@ class AlunoCard(QFrame):
             }}
             """
         )
+        foto = QPixmap(foto_perfil) if foto_perfil else QPixmap()
+        if not foto.isNull():
+            avatar.setPixmap(recortar_circulo(foto, TAMANHO_AVATAR, ler_ajuste(foto_perfil_ajuste)))
         layout.addWidget(avatar, alignment=Qt.AlignVCenter)
 
         nome = QLabel(nome_completo)
@@ -143,7 +206,11 @@ class AlunoCard(QFrame):
         )
         layout.addWidget(nome, stretch=1, alignment=Qt.AlignVCenter)
 
-        botao_excluir = _BotaoExcluir()
+        botao_editar = _BotaoIcone(_SVG_LAPIS, Cores.AZUL_PRIMARIO, Cores.FUNDO, "Editar foto de perfil")
+        botao_editar.clicked.connect(lambda: self.editar_foto_solicitado.emit(self._aluno_id))
+        layout.addWidget(botao_editar, alignment=Qt.AlignVCenter)
+
+        botao_excluir = _BotaoIcone(_SVG_LIXEIRA, Cores.ERRO, Cores.ERRO_FUNDO, "Excluir aluno")
         botao_excluir.clicked.connect(lambda: self.excluir_solicitado.emit(self._aluno_id))
         layout.addWidget(botao_excluir, alignment=Qt.AlignVCenter)
 

@@ -1,6 +1,7 @@
 """Regras de acesso aos dados dos alunos, isolando a UI do SQL bruto."""
 
 import inspect
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -22,6 +23,13 @@ _COLUNAS_COMPOSICAO = (
     "densidade_corporal", "percentual_gordura", "percentual_gordura_bruto",
     "massa_gorda", "massa_magra",
 )
+
+
+def _chave_alfabetica(nome: str) -> str:
+    """Chave de ordenação que ignora acento e maiúscula/minúscula."""
+    sem_acento = unicodedata.normalize("NFKD", nome)
+    sem_acento = "".join(c for c in sem_acento if not unicodedata.combining(c))
+    return sem_acento.casefold()
 
 
 @dataclass(frozen=True)
@@ -66,6 +74,9 @@ class Aluno:
     foto_costas: Optional[str] = None
     foto_lado_direito: Optional[str] = None
     foto_lado_esquerdo: Optional[str] = None
+    foto_perfil: Optional[str] = None
+    # "zoom,x,y" -- ver `gui/widgets/aluno_card.py` (`recortar_circulo`).
+    foto_perfil_ajuste: Optional[str] = None
 
 
 class AlunoService:
@@ -111,6 +122,8 @@ class AlunoService:
         foto_costas: Optional[str] = None,
         foto_lado_direito: Optional[str] = None,
         foto_lado_esquerdo: Optional[str] = None,
+        foto_perfil: Optional[str] = None,
+        foto_perfil_ajuste: Optional[str] = None,
     ) -> Aluno:
         nome_completo = nome_completo.strip()
         conexao = obter_conexao()
@@ -134,11 +147,12 @@ class AlunoService:
                     medida_coxa_d, medida_coxa_e,
                     medida_panturrilha_e, medida_panturrilha_d,
                     foto_frente, foto_costas,
-                    foto_lado_direito, foto_lado_esquerdo
+                    foto_lado_direito, foto_lado_esquerdo, foto_perfil,
+                    foto_perfil_ajuste
                 )
                 VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -158,7 +172,8 @@ class AlunoService:
                     medida_coxa_d, medida_coxa_e,
                     medida_panturrilha_e, medida_panturrilha_d,
                     foto_frente, foto_costas,
-                    foto_lado_direito, foto_lado_esquerdo,
+                    foto_lado_direito, foto_lado_esquerdo, foto_perfil,
+                    foto_perfil_ajuste,
                 ),
             )
             conexao.commit()
@@ -227,15 +242,18 @@ class AlunoService:
                     """
                     SELECT * FROM alunos
                     WHERE nome_completo LIKE ? COLLATE NOCASE
-                    ORDER BY nome_completo ASC
                     """,
                     (f"%{termo_busca}%",),
                 ).fetchall()
             else:
                 linhas = conexao.execute(
-                    "SELECT * FROM alunos ORDER BY nome_completo ASC"
+                    "SELECT * FROM alunos"
                 ).fetchall()
-            return [self._linha_para_aluno(linha) for linha in linhas]
+            # Ordem alfabética no Python, não no ORDER BY: o SQLite compara
+            # bytes, então minúsculas e nomes acentuados ("Álvaro", "Érica")
+            # iam para depois do "Z".
+            alunos = [self._linha_para_aluno(linha) for linha in linhas]
+            return sorted(alunos, key=lambda aluno: _chave_alfabetica(aluno.nome_completo))
         finally:
             conexao.close()
 
@@ -292,6 +310,8 @@ class AlunoService:
             foto_costas=linha["foto_costas"],
             foto_lado_direito=linha["foto_lado_direito"],
             foto_lado_esquerdo=linha["foto_lado_esquerdo"],
+            foto_perfil=linha["foto_perfil"],
+            foto_perfil_ajuste=linha["foto_perfil_ajuste"],
         )
 
     # -- Avaliações (Etapa 6: circunferências) ----------------------------

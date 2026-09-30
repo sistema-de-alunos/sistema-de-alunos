@@ -13,6 +13,7 @@ from core.qt_core import (
     Signal,
 )
 from core.theme import Cores, Fontes
+from gui.dialogs.foto_perfil import FotoPerfilDialog
 from gui.widgets.aluno_card import AlunoCard
 from gui.widgets.barra_pesquisa import BarraPesquisa
 from gui.widgets.botao_principal import BotaoPrimario
@@ -196,14 +197,19 @@ class PainelAlunosPage(QWidget):
         conteúdo interno muda. Estilo aplicado direto na instância (sem
         seletor de tipo "QFrame"): como QLabel também é, por herança, um
         QFrame, um seletor de tipo vazaria essa borda para os textos e
-        cards internos.
+        cards internos. Pelo mesmo motivo, o seletor é por nome de objeto:
+        sem seletor nenhum, a borda também vazava para a barra de rolagem
+        (que virava uma caixa quadrada com contorno).
         """
         moldura = QFrame()
+        moldura.setObjectName("molduraLista")
         moldura.setStyleSheet(
             f"""
-            background-color: {Cores.FUNDO_LISTA};
-            border: 1px solid {Cores.BORDA_LISTA};
-            border-radius: 16px;
+            QFrame#molduraLista {{
+                background-color: {Cores.FUNDO_LISTA};
+                border: 1px solid {Cores.BORDA_LISTA};
+                border-radius: 16px;
+            }}
             """
         )
         return moldura
@@ -273,27 +279,6 @@ class PainelAlunosPage(QWidget):
         scroll.setStyleSheet(
             f"""
             QScrollArea {{ background: transparent; border: none; }}
-            QScrollBar:vertical {{
-                background: transparent;
-                width: 8px;
-                margin: 2px 0px 2px 0px;
-            }}
-            QScrollBar::handle:vertical {{
-                background-color: {Cores.SCROLL_THUMB};
-                border-radius: 4px;
-                min-height: 24px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background-color: {Cores.SCROLL_THUMB_HOVER};
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0px;
-                border: none;
-                background: none;
-            }}
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-                background: none;
-            }}
             """
         )
 
@@ -304,9 +289,12 @@ class PainelAlunosPage(QWidget):
         layout_lista.setSpacing(10)
 
         for aluno in alunos:
-            card = AlunoCard(aluno.id, aluno.nome_completo)
+            card = AlunoCard(
+                aluno.id, aluno.nome_completo, aluno.foto_perfil, aluno.foto_perfil_ajuste
+            )
             card.clicado.connect(self.aluno_selecionado.emit)
             card.excluir_solicitado.connect(self._confirmar_exclusao)
+            card.editar_foto_solicitado.connect(self._editar_foto_perfil)
             layout_lista.addWidget(card)
 
         layout_lista.addStretch()
@@ -341,6 +329,29 @@ class PainelAlunosPage(QWidget):
 
         self.recarregar()
         self.mostrar_sucesso("Aluno excluído com sucesso.")
+
+    # -- Foto de perfil ------------------------------------------------------
+
+    def _editar_foto_perfil(self, aluno_id: int) -> None:
+        aluno = self._aluno_service.buscar_por_id(aluno_id)
+        if aluno is None:
+            return
+        dialogo = FotoPerfilDialog(aluno.foto_perfil, aluno.foto_perfil_ajuste, self)
+        if not dialogo.exec():
+            return  # cancelou: mantém a foto atual
+
+        try:
+            self._aluno_service.atualizar_aluno(
+                aluno_id, foto_perfil=dialogo.caminho, foto_perfil_ajuste=dialogo.ajuste_texto
+            )
+        except Exception:
+            self._mostrar_erro("Não foi possível salvar a foto agora. Tente novamente.")
+            return
+
+        self.recarregar()
+        self.mostrar_sucesso(
+            "Foto de perfil atualizada." if dialogo.caminho else "Foto de perfil removida."
+        )
 
     # -- Mensagens de status -------------------------------------------------
 

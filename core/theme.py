@@ -40,3 +40,40 @@ class Fontes:
     TAMANHO_SUBTITULO = 13
     TAMANHO_LABEL = 13
     TAMANHO_TEXTO = 14
+
+
+# Barra de rolagem arredondada do app inteiro (aplicada em `main.py` via
+# `QApplication.setStyleSheet`): trilho e alça em pílula, sem as setas
+# quadradas do estilo nativo do Windows.
+ESTILO_BARRA_ROLAGEM = f"""
+QScrollBar:vertical {{
+    background: transparent;
+    width: 10px;
+    margin: 2px;
+    border-radius: 5px;
+}}
+QScrollBar:horizontal {{
+    background: transparent;
+    height: 10px;
+    margin: 2px;
+    border-radius: 5px;
+}}
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal {{
+    background-color: {Cores.SCROLL_THUMB};
+    border-radius: 3px;
+}}
+QScrollBar::handle:vertical {{ min-height: 24px; }}
+QScrollBar::handle:horizontal {{ min-width: 24px; }}
+QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{
+    background-color: {Cores.SCROLL_THUMB_HOVER};
+}}
+QScrollBar::add-line, QScrollBar::sub-line {{
+    width: 0px;
+    height: 0px;
+    border: none;
+    background: none;
+}}
+QScrollBar::add-page, QScrollBar::sub-page {{
+    background: none;
+}}
+"""

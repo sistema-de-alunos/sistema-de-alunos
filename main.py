@@ -1,6 +1,7 @@
 import sys
 
 from core.qt_core import QApplication, QMainWindow
+from core.theme import ESTILO_BARRA_ROLAGEM
 from database.database import inicializar_banco
 from ui_main import UI_MainWindow
 
@@ -23,5 +24,6 @@ if __name__ == "__main__":
     inicializar_banco()
 
     app = QApplication(sys.argv)
+    app.setStyleSheet(ESTILO_BARRA_ROLAGEM)
     window = MainWindow()
     sys.exit(app.exec())
