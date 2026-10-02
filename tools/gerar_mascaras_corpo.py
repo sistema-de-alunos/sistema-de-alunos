@@ -294,6 +294,15 @@ QUADRIL_RECUO_EXTERNO_PX = 4
 # Depois das coxas prontas, o fundo reto do quadril (`LIMITE_INFERIOR`) desce
 # até este tanto (px) pela pele livre, até encostar nas coxas (ver `main()`).
 DESCIDA_QUADRIL_PX = 80
+# Laterais do quadril: em cada faixa de linhas (frações de altura) crescem
+# até o raio (px) pra fora, só sobre pele livre, ficando a
+# `QUADRIL_RECUO_INFERIOR_PX` do fundo real (em vez de QUADRIL_RECUO_EXTERNO_PX).
+AUMENTO_LATERAL_QUADRIL = [
+    ((0.44, 1.0), 8),   # parte de baixo
+    ((0.0, 0.44), 4),   # parte de cima -- bem pouco
+    ((0.39, 0.415), 10),  # canto de cima, entre cintura e borda do corpo
+]
+QUADRIL_RECUO_INFERIOR_PX = 1
 
 # O fechamento da silhueta solda o vão entre as pernas (ver comentário de
 # `ZONAS_EXCLUSAO_FECHAMENTO`) e as coxas herdavam esse fundo como lateral
@@ -313,13 +322,17 @@ ABA_EXTERNA_COXA_MAX_PX = {"right_thigh": 3, "left_thigh": 2}
 # faixa de linhas (frações de altura) a coxa cresce até o raio (px) pra
 # fora, só sobre pixels que não são de outra região.
 AUMENTO_EXTERNO_COXA = [
-    ((0.59, 0.655), 6),   # parte de baixo, perto do joelho
+    ((0.59, 0.68), 16),   # parte de baixo, perto do joelho
     ((0.45, 0.56), 40),   # parte de cima, perto do quadril
 ]
 
 # Quanto (px) braço e ombro crescem pra fora, sobre a borda escura da pele
 # que a silhueta deixa de fora (ver uso em `main()`).
 AUMENTO_EXTERNO_BRACO_OMBRO_PX = {"right_arm": 5, "left_arm": 5, "shoulder": 5}
+# Mesmo assim sobrava pele sem máscara na borda externa (até ~6px). No fim,
+# com todas as máscaras prontas, cada uma cresce até este tanto (px) só na
+# metade externa e só na faixa junto à borda do corpo, sobre pele livre.
+AJUSTE_EXTERNO_BRACO_OMBRO_PX = 8
 # Quanto (px) o fundo do braço fica acima do topo do antebraço.
 RECUO_INFERIOR_BRACO_PX = 22
 # Raio (px) do fechamento que tapa falhas na borda interna do braço.
@@ -331,7 +344,10 @@ RECUO_BRACO_CINTURA_PX = {"right_arm": 8}
 # ficava cortado pelo peito, com uma faixa de pele sem máscara entre braço e
 # peito. A cintura sobe/cresce até este tanto (px) só sobre pele que não é
 # de nenhuma outra máscara final.
-SUBIDA_CINTURA_DIREITA_PX = 25
+SUBIDA_CINTURA_DIREITA_PX = 70
+# Folga (px) dessa subida até as outras máscaras. A faixa entre braço e peito
+# tem só ~8-11px; com 5px de cada lado a cintura não entrava nela.
+FOLGA_SUBIDA_CINTURA_PX = 1
 # A ponta de baixo da cintura parava antes do quadril, com pele sem máscara
 # entre os dois. Ela desce até este tanto (px), só sobre pele livre.
 DESCIDA_CINTURA_PX = 40
@@ -350,6 +366,9 @@ PREENCHIMENTO_EXTERNO_ANTEBRACO_PX = 30
 RECUO_TOPO_PANTURRILHA_PX = 85
 # Quanto (px) as bordas externa/interna das panturrilhas crescem.
 AUMENTO_LATERAL_PANTURRILHA_PX = 8
+# Quanto (px) a borda interna (lado da outra perna) cresce a mais, até a borda
+# real do corpo -- sobrava pele sem máscara no meio da panturrilha.
+AUMENTO_INTERNO_PANTURRILHA_PX = 16
 # Quanto (px) o meio do topo desce em relação aos cantos (arco invertido).
 ARREDONDAMENTO_TOPO_PANTURRILHA_PX = 30
 
@@ -731,6 +750,16 @@ def main() -> None:
             extra &= ~acima_do_oval
             outras = np.isin(rotulos_ws, [nome_para_id[n] for n in nomes if n != nome and not n.startswith("ignore")])
             binaria = binaria | (extra & ~fundo_real & ~outras)
+            # Ver `AUMENTO_INTERNO_PANTURRILHA_PX`: só do centro da panturrilha
+            # pra dentro, entre o topo oval e o fundo atual (o tornozelo fica).
+            extra = ndimage.binary_dilation(binaria, morph_disk(AUMENTO_INTERNO_PANTURRILHA_PX))
+            extra &= ~acima_do_oval
+            extra[np.where(binaria.any(axis=1))[0].max() + 1 :] = False
+            if cx < w // 2:
+                extra[:, : int(cx)] = False
+            else:
+                extra[:, int(cx) :] = False
+            binaria = binaria | (extra & ~fundo_real & ~outras)
         if nome in AUMENTO_EXTERNO_BRACO_OMBRO_PX:
             # A borda externa é pele escura (gray<100) fora da silhueta.
             # Cresce só sobre pixels sem região nenhuma (rótulo 0) que são
@@ -815,6 +844,21 @@ def main() -> None:
             if n_pedacos > 1:
                 tamanhos = ndimage.sum(binaria, rotulos_coxa, range(1, n_pedacos + 1))
                 binaria = rotulos_coxa == int(np.argmax(tamanhos)) + 1
+            # A folga acima deixava uma faixa de pele sem máscara na borda
+            # interna, onde o vão entre as pernas já separa as coxas: ali a
+            # coxa volta até a borda real, só na própria metade da imagem.
+            livre_interno = ~fundo_real & ~ocupado_coxa
+            livre_interno[: np.where(fundo_entre_pernas.any(axis=1))[0].min()] = False
+            livre_interno[int(0.60 * h) :] = False  # só a parte de cima (o joelho fica)
+            if nome == "right_thigh":
+                livre_interno[:, : int(FAIXA_INTERNA_COXAS_X[0] * w)] = False
+                livre_interno[:, w // 2 :] = False
+            else:
+                livre_interno[:, : w // 2] = False
+                livre_interno[:, int(FAIXA_INTERNA_COXAS_X[1] * w) :] = False
+            binaria = ndimage.binary_dilation(
+                binaria, iterations=FOLGA_ENTRE_COXAS_PX, mask=livre_interno | binaria
+            )
         if nome in LIMITE_LATERAL:
             x0f, x1f = LIMITE_LATERAL[nome]
             binaria = binaria.copy()
@@ -858,8 +902,16 @@ def main() -> None:
     # Tapa os buracos que ficam fechados dentro dele (onde antes subiam os
     # topos das coxas), só sobre pele livre.
     quadril = quadril | (ndimage.binary_fill_holes(quadril) & ~outras_finais & ~fundo_real)
+    # Ver `AUMENTO_LATERAL_QUADRIL`.
+    base_quadril = quadril
+    for (y0_lat, y1_lat), raio_lat in AUMENTO_LATERAL_QUADRIL:
+        extra = ndimage.binary_dilation(base_quadril, morph_disk(raio_lat))
+        extra[: int(y0_lat * h)] = False
+        extra[int(y1_lat * h) :] = False
+        extra[:, int(FAIXA_INTERNA_COXAS_X[0] * w) : int(FAIXA_INTERNA_COXAS_X[1] * w)] = False
+        quadril = quadril | (extra & (dist_ao_fundo > QUADRIL_RECUO_INFERIOR_PX) & ~outras_finais)
     mascaras_finais["hip"] = quadril
-    salvar_mascara(PASTA_SAIDA / "hip.png", quadril, corpo_mask, h, w, raio_fechamento=4)
+    salvar_mascara(PASTA_SAIDA / "hip.png", quadril, corpo_mask | ~fundo_real, h, w, raio_fechamento=4)
 
     # Ver `SUBIDA_CINTURA_DIREITA_PX`. Roda depois de tudo porque a faixa
     # livre só existe depois que o braço recua (`RECUO_BRACO_CINTURA_PX`).
@@ -868,7 +920,7 @@ def main() -> None:
     for n, m in mascaras_finais.items():
         if n != "waist":
             ocupado |= m
-    livre = ~fundo_real & ~ndimage.binary_dilation(ocupado, iterations=5)
+    livre = ~fundo_real & ~ndimage.binary_dilation(ocupado, iterations=FOLGA_SUBIDA_CINTURA_PX)
     # Só a metade externa (lado do braço) da cintura direita.
     livre[:, int(np.where(cintura[:, : w // 2].any(axis=0))[0].mean()) :] = False
     livre[: np.where(cintura[:, : w // 2].any(axis=1))[0].min() - SUBIDA_CINTURA_DIREITA_PX] = False
@@ -901,6 +953,30 @@ def main() -> None:
         PASTA_SAIDA / "waist.png", cintura, limite, h, w,
         raio_fechamento=FECHAMENTO_EXTRA.get("waist", 4),
     )
+    mascaras_finais["waist"] = cintura
+
+    # Ver `AJUSTE_EXTERNO_BRACO_OMBRO_PX`.
+    for nome in AUMENTO_EXTERNO_BRACO_OMBRO_PX:
+        mascara = mascaras_finais[nome]
+        ocupado = np.zeros_like(mascara)
+        for n, m in mascaras_finais.items():
+            if n != nome:
+                ocupado |= m
+        livre = ~fundo_real & ~ocupado & (dist_ao_fundo <= AJUSTE_EXTERNO_BRACO_OMBRO_PX)
+        for lado in (slice(0, w // 2), slice(w // 2, w)):
+            cols = np.where(mascara[:, lado].any(axis=0))[0]
+            if not len(cols):
+                continue
+            cx = lado.start + int(cols.mean())
+            if lado.start == 0:
+                livre[:, cx : w // 2] = False
+            else:
+                livre[:, w // 2 : cx] = False
+        mascara = ndimage.binary_dilation(
+            mascara, iterations=AJUSTE_EXTERNO_BRACO_OMBRO_PX, mask=livre | mascara
+        )
+        mascaras_finais[nome] = mascara
+        salvar_mascara(PASTA_SAIDA / f"{nome}.png", mascara, corpo_mask | ~fundo_real, h, w)
 
     # visualização de depuração: cada região com uma cor diferente, pra
     # conferir rapidamente antes de confiar nos PNGs finais.
