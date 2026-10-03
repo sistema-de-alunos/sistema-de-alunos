@@ -1,31 +1,3 @@
-"""Boneco anatômico interativo usado na etapa de avaliação física.
-
-Cada região destacável (ombro, tórax, braço...) é uma MÁSCARA precisa
-recortada da imagem original -- não um polígono/retângulo aproximado. As
-máscaras foram geradas offline por segmentação watershed sobre a imagem de
-cada modelo (`corpohomem.png` / `corpomulher.png`), usando como divisores os
-próprios traços da ilustração (sulco deltopeitoral, sulcos do abdômen, prega
-inguinal, dobra do joelho...), e ficam em
-`assets/corpos/mascaras_masculino|feminino/<id_regiao>.png`: um PNG do mesmo
-tamanho da imagem base, transparente fora da região e com o contorno
-anti-aliased exatamente sobre o músculo correspondente (ver
-`tools/gerar_mascaras_corpo.py` / `tools/gerar_mascaras_corpo_feminino.py`
-para regenerá-las caso a imagem base mude).
-
-Pintar o destaque é então só desenhar essa máscara (que já é verde, com
-alfa alto dentro do contorno) por cima da imagem base com opacidade reduzida
--- Qt escala o pixmap para o retângulo de exibição atual, então a máscara
-acompanha o redimensionamento do widget pixel a pixel junto com a imagem,
-sem precisar remapear coordenada nenhuma. A imagem original nunca é
-alterada: o destaque é sempre uma camada por cima, então a musculatura,
-sombra e volume da ilustração continuam visíveis por baixo do verde.
-
-Cada modelo de corpo (masculino, feminino) tem sua própria pasta de
-máscaras, pois as proporções/pose de cada imagem são diferentes -- os ids de
-região são os mesmos nos dois modelos (`IDS_REGIOES_MASCULINO` ==
-`IDS_REGIOES_FEMININO`), só a máscara por trás de cada id muda.
-"""
-
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -48,12 +20,6 @@ PASTA_MASCARAS_MASCULINO = _PASTA_ASSETS / "mascaras_masculino"
 CAMINHO_IMAGEM_FEMININO = str(_PASTA_ASSETS / "corpomulher.png")
 PASTA_MASCARAS_FEMININO = _PASTA_ASSETS / "mascaras_feminino"
 
-# ids das regiões com máscara gerada para cada boneco -- os dois modelos
-# (masculino e feminino) usam exatamente o mesmo conjunto de ids, só a
-# imagem/pasta de máscaras muda (ver `tools/gerar_mascaras_corpo.py` e
-# `tools/gerar_mascaras_corpo_feminino.py`). Ver gui/dialogs/cadastro_alunos.py
-# (_REGIAO_POR_CHAVE) para o mapeamento entre cada linha da tabela de
-# medidas e o id de região correspondente aqui.
 IDS_REGIOES_MASCULINO = (
     "shoulder",
     "chest",
@@ -73,18 +39,10 @@ IDS_REGIOES_FEMININO = IDS_REGIOES_MASCULINO
 
 _OPACIDADE_SELECIONADO = 0.62
 _OPACIDADE_HOVER = 0.30
-_ALFA_MINIMO_CLIQUE = 25  # ignora a franja bem fraca da borda suavizada
+_ALFA_MINIMO_CLIQUE = 25
 
 
 class CorpoInterativoWidget(QWidget):
-    """Ilustração anatômica com regiões que podem ser destacadas em verde.
-
-    Uso: `definir_regioes_selecionadas({"chest", "left_arm"})` acende essas
-    regiões e apaga as demais; passar um conjunto vazio limpa tudo. O sinal
-    `regiao_clicada` permite a interação inversa (clicar no corpo para focar
-    o campo correspondente na tabela).
-    """
-
     regiao_clicada = Signal(str)
 
     def __init__(
@@ -99,9 +57,6 @@ class CorpoInterativoWidget(QWidget):
         self._selecionadas: set = set()
         self._regiao_hover: Optional[str] = None
 
-        # Cada máscara é carregada duas vezes: como QPixmap (pintura rápida,
-        # já pronta pra `drawPixmap`) e como QImage (única forma de ler o
-        # valor de um pixel, usada no hit-test de clique/hover).
         self._mascaras: Dict[str, QPixmap] = {}
         self._mascaras_imagem = {}
         for id_regiao in ids_regioes:
@@ -117,7 +72,6 @@ class CorpoInterativoWidget(QWidget):
         self.setMouseTracking(True)
 
     def definir_regioes_selecionadas(self, ids) -> None:
-        """Substitui o conjunto de regiões destacadas e repinta, se mudou."""
         novo_conjunto = set(ids)
         if novo_conjunto == self._selecionadas:
             return
@@ -129,15 +83,8 @@ class CorpoInterativoWidget(QWidget):
             return super().sizeHint()
         return QSize(self._pixmap.width() // 4, self._pixmap.height() // 4)
 
-    # -- Geometria: onde a imagem cai dentro do widget -----------------------
 
     def _retangulo_imagem(self) -> QRectF:
-        """Retângulo (coordenadas do widget) onde a imagem é desenhada,
-        preservando a proporção original e centralizada -- mesma ideia de um
-        QLabel com Qt.KeepAspectRatio. Como cada máscara tem exatamente o
-        mesmo tamanho em pixels da imagem base, desenhá-las nesse mesmo
-        retângulo já basta para ficarem alinhadas a qualquer escala.
-        """
         if self._pixmap.isNull():
             return QRectF()
         tamanho_ajustado = self._pixmap.size().scaled(self.size(), Qt.KeepAspectRatio)
@@ -163,7 +110,6 @@ class CorpoInterativoWidget(QWidget):
                 melhor_id = id_regiao
         return melhor_id
 
-    # -- Pintura --------------------------------------------------------------
 
     def paintEvent(self, evento) -> None:
         painter = QPainter(self)
@@ -190,8 +136,6 @@ class CorpoInterativoWidget(QWidget):
         painter.drawPixmap(retangulo, pixmap, QRectF(pixmap.rect()))
         painter.setOpacity(1.0)
 
-    # -- Interação: hover e clique (tabela -> corpo já cobre o essencial;
-    # corpo -> tabela é o extra do item 14, sem risco: só emite um sinal) ----
 
     def mouseMoveEvent(self, evento) -> None:
         nova_regiao = self._regiao_no_ponto(evento.position())

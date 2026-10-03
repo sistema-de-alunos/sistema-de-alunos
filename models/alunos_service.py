@@ -1,5 +1,3 @@
-"""Regras de acesso aos dados dos alunos, isolando a UI do SQL bruto."""
-
 import inspect
 import unicodedata
 from dataclasses import dataclass
@@ -7,10 +5,6 @@ from typing import Any, Dict, List, Optional
 
 from database.database import obter_conexao
 
-# Colunas de cada avaliação (Etapas 6 e 7), na ordem em que aparecem na
-# tabela -- usadas tanto para montar o INSERT quanto para ler de volta uma
-# linha do banco como dict. `data` é sempre a primeira coluna de verdade
-# (id/aluno_id/criado_em ficam de fora -- são geridas pelo próprio banco).
 _COLUNAS_CIRCUNFERENCIA = (
     "data", "ombro", "torax", "cintura", "abdominal", "quadril",
     "braco_e", "braco_e_contraido", "braco_d", "braco_d_contraido",
@@ -30,7 +24,6 @@ _COLUNAS_COMPOSICAO = (
 
 
 def _chave_alfabetica(nome: str) -> str:
-    """Chave de ordenação que ignora acento e maiúscula/minúscula."""
     sem_acento = unicodedata.normalize("NFKD", nome)
     sem_acento = "".join(c for c in sem_acento if not unicodedata.combining(c))
     return sem_acento.casefold()
@@ -83,13 +76,10 @@ class Aluno:
     foto_lado_direito: Optional[str] = None
     foto_lado_esquerdo: Optional[str] = None
     foto_perfil: Optional[str] = None
-    # "zoom,x,y" -- ver `gui/widgets/aluno_card.py` (`recortar_circulo`).
     foto_perfil_ajuste: Optional[str] = None
 
 
 class AlunoService:
-    """Operações de cadastro e consulta de alunos no banco local."""
-
     def criar_aluno(
         self,
         nome_completo: str,
@@ -197,18 +187,10 @@ class AlunoService:
             conexao.close()
 
         aluno = self.buscar_por_id(novo_id)
-        assert aluno is not None  # acabou de ser inserido
+        assert aluno is not None
         return aluno
 
     def atualizar_aluno(self, aluno_id: int, **campos) -> Optional["Aluno"]:
-        """Atualiza só os campos passados (edição do cadastro básico).
-
-        Nomes de coluna não podem ser parametrizados como valores (`?`) --
-        por isso `campos` é filtrado contra a própria assinatura de
-        `criar_aluno` (a lista real de colunas aceitas) antes de entrar na
-        string do UPDATE, nunca contra o que quer que o chamador mande.
-        `WHERE id = ?` garante que a atualização nunca alcança outro aluno.
-        """
         if not campos:
             return self.buscar_por_id(aluno_id)
 
@@ -232,7 +214,6 @@ class AlunoService:
         return self.buscar_por_id(aluno_id)
 
     def existe_algum_aluno(self) -> bool:
-        """Indica se há pelo menos um aluno cadastrado, ignorando filtros de busca."""
         conexao = obter_conexao()
         try:
             linha = conexao.execute("SELECT 1 FROM alunos LIMIT 1").fetchone()
@@ -264,9 +245,6 @@ class AlunoService:
                 linhas = conexao.execute(
                     "SELECT * FROM alunos"
                 ).fetchall()
-            # Ordem alfabética no Python, não no ORDER BY: o SQLite compara
-            # bytes, então minúsculas e nomes acentuados ("Álvaro", "Érica")
-            # iam para depois do "Z".
             alunos = [self._linha_para_aluno(linha) for linha in linhas]
             return sorted(alunos, key=lambda aluno: _chave_alfabetica(aluno.nome_completo))
         finally:
@@ -333,21 +311,10 @@ class AlunoService:
             foto_perfil_ajuste=linha["foto_perfil_ajuste"],
         )
 
-    # -- Avaliações (Etapa 6: circunferências) ----------------------------
 
     def adicionar_avaliacoes_circunferencias(
         self, aluno_id: int, avaliacoes: List[Dict[str, Any]]
     ) -> None:
-        """Insere avaliações de circunferências NOVAS de UM aluno -- nunca
-        apaga nem sobrescreve as que já existem no banco.
-
-        Uma avaliação salva é permanente (regras de edição, seção 9: "uma
-        avaliação salva não pode voltar para o estado editável"): quem
-        chama (`CadastroAlunoWizard._salvar_aluno`) só passa aqui as
-        avaliações que ainda não têm linha no banco -- as já salvas nunca
-        passam de novo por este método, então não há risco de excluir ou
-        regravar uma avaliação antiga.
-        """
         if not avaliacoes:
             return
 
@@ -370,8 +337,6 @@ class AlunoService:
             conexao.close()
 
     def listar_avaliacoes_circunferencias(self, aluno_id: int) -> List[Dict[str, Any]]:
-        """Todas as avaliações de circunferências de UM aluno, na ordem em
-        que foram criadas (mesma ordem das colunas na tela)."""
         colunas = ", ".join(_COLUNAS_CIRCUNFERENCIA)
         conexao = obter_conexao()
         try:
@@ -386,14 +351,10 @@ class AlunoService:
         finally:
             conexao.close()
 
-    # -- Avaliações (Etapa 7: dobras cutâneas / composição corporal) -------
 
     def adicionar_avaliacoes_composicao(
         self, aluno_id: int, avaliacoes: List[Dict[str, Any]]
     ) -> None:
-        """Mesmo mecanismo de `adicionar_avaliacoes_circunferencias`
-        (só INSERT, nunca apaga/sobrescreve o que já está salvo), aplicado
-        às avaliações da Etapa 7."""
         if not avaliacoes:
             return
 
@@ -415,11 +376,8 @@ class AlunoService:
         finally:
             conexao.close()
 
-    # -- Sessões de fotos (Etapa 8) -----------------------------------------
 
     def adicionar_sessoes_fotos(self, aluno_id: int, sessoes: List[Dict[str, Any]]) -> None:
-        """Mesmo mecanismo das avaliações (só INSERT, nunca apaga/sobrescreve
-        uma sessão já salva)."""
         if not sessoes:
             return
         colunas = ", ".join(_COLUNAS_SESSAO_FOTOS)
@@ -436,7 +394,6 @@ class AlunoService:
             conexao.close()
 
     def listar_sessoes_fotos(self, aluno_id: int) -> List[Dict[str, Any]]:
-        """Sessões de fotos de UM aluno, na ordem em que foram criadas."""
         colunas = ", ".join(_COLUNAS_SESSAO_FOTOS)
         conexao = obter_conexao()
         try:
@@ -449,8 +406,6 @@ class AlunoService:
             conexao.close()
 
     def listar_avaliacoes_composicao(self, aluno_id: int) -> List[Dict[str, Any]]:
-        """Todas as avaliações de composição corporal de UM aluno, na ordem
-        em que foram criadas (mesma ordem das colunas na tela)."""
         colunas = ", ".join(_COLUNAS_COMPOSICAO)
         conexao = obter_conexao()
         try:

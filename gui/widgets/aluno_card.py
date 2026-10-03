@@ -1,5 +1,3 @@
-"""Item visual da lista de alunos: o card de cada aluno cadastrado."""
-
 from core.qt_core import (
     QByteArray,
     QColor,
@@ -21,9 +19,6 @@ from core.theme import Cores, Fontes
 
 TAMANHO_AVATAR = 52
 
-# Ícone de lixeira minimalista (traço fino, sem preenchimento), desenhado em
-# SVG para não depender da fonte de emoji do sistema — que renderiza um
-# desenho colorido e "pesado" em vez de um ícone de interface discreto.
 _SVG_LIXEIRA = """
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
      stroke="{cor}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -36,7 +31,6 @@ _SVG_LIXEIRA = """
 """
 
 
-# Lápis no mesmo traço fino da lixeira (editar a foto de perfil).
 _SVG_LAPIS = """
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
      stroke="{cor}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
@@ -47,7 +41,6 @@ _SVG_LAPIS = """
 
 
 def _icone_svg(svg_modelo: str, cor: str, tamanho: int = 18) -> QIcon:
-    """Renderiza um dos ícones SVG acima na cor pedida, como QIcon."""
     svg = svg_modelo.format(cor=cor)
     renderer = QSvgRenderer(QByteArray(svg.encode("utf-8")))
     pixmap = QPixmap(tamanho, tamanho)
@@ -58,15 +51,10 @@ def _icone_svg(svg_modelo: str, cor: str, tamanho: int = 18) -> QIcon:
     return QIcon(pixmap)
 
 
-# Ajuste da foto de perfil: (zoom, x, y). zoom 1 = a foto cobre o círculo
-# justo; x/y = ponto da foto (fração 0-1 da largura/altura) que fica no
-# centro do círculo. Independe do tamanho, então vale igual no card (52px) e
-# na janela de ajuste.
 AJUSTE_PADRAO = (1.0, 0.5, 0.5)
 
 
 def ler_ajuste(texto) -> tuple:
-    """"zoom,x,y" salvo no banco -> tupla; padrão se vazio ou inválido."""
     try:
         zoom, x, y = (float(v) for v in texto.split(","))
         return (max(zoom, 1.0), x, y)
@@ -75,11 +63,6 @@ def ler_ajuste(texto) -> tuple:
 
 
 def geometria_foto(largura: int, altura: int, tamanho: int, ajuste: tuple) -> tuple:
-    """Retângulo (x, y, largura, altura) onde desenhar a foto num quadrado de
-    `tamanho` px. `cx`/`cy` (0-1) é o ponto da foto que fica no centro do
-    círculo -- qualquer ponto, nas duas direções (antes era limitado para a
-    foto sempre cobrir o círculo, o que travava um dos eixos: numa foto
-    deitada, por exemplo, não dava para subir/descer)."""
     zoom, cx, cy = ajuste
     escala = max(tamanho / largura, tamanho / altura) * zoom
     lw, lh = largura * escala, altura * escala
@@ -89,7 +72,6 @@ def geometria_foto(largura: int, altura: int, tamanho: int, ajuste: tuple) -> tu
 
 
 def recortar_circulo(original: QPixmap, tamanho: int, ajuste: tuple = AJUSTE_PADRAO) -> QPixmap:
-    """A foto posicionada por `ajuste`, recortada num círculo de `tamanho` px."""
     x, y, lw, lh = geometria_foto(original.width(), original.height(), tamanho, ajuste)
     resultado = QPixmap(tamanho, tamanho)
     resultado.fill(Qt.transparent)
@@ -99,7 +81,6 @@ def recortar_circulo(original: QPixmap, tamanho: int, ajuste: tuple = AJUSTE_PAD
     recorte = QPainterPath()
     recorte.addEllipse(0, 0, tamanho, tamanho)
     painter.setClipPath(recorte)
-    # Onde a foto não cobre o círculo (foto deslocada), fundo neutro.
     painter.fillRect(0, 0, tamanho, tamanho, QColor(Cores.FUNDO))
     painter.drawPixmap(QRectF(x, y, lw, lh), original, QRectF(original.rect()))
     painter.end()
@@ -116,8 +97,6 @@ def _iniciais(nome_completo: str) -> str:
 
 
 class _BotaoIcone(QPushButton):
-    """Ícone de ação do card: SVG minimalista, com leve troca de cor no hover."""
-
     def __init__(self, svg_modelo: str, cor_hover: str, fundo_hover: str, dica: str, parent=None):
         super().__init__(parent)
         self._icone_normal = _icone_svg(svg_modelo, Cores.TEXTO_SECUNDARIO)
@@ -153,8 +132,6 @@ class _BotaoIcone(QPushButton):
 
 
 class AlunoCard(QFrame):
-    """Um item clicável da lista, representando um aluno cadastrado."""
-
     clicado = Signal(int)
     excluir_solicitado = Signal(int)
     editar_foto_solicitado = Signal(int)

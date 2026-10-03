@@ -1,11 +1,3 @@
-# Gera dist\SistemaDeAlunos.zip (o .exe e tudo que ele precisa) -- é este
-# zip que vai para a Release do GitHub e que o `instalar.ps1` baixa.
-#
-# Uso (na raiz do projeto):  powershell -ExecutionPolicy Bypass -File tools\gerar_executavel.ps1
-#
-# Usa um ambiente virtual próprio (.venv-build) para não mexer no Python do
-# computador de desenvolvimento.
-
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path $PSScriptRoot -Parent)
 
@@ -17,9 +9,6 @@ $py = ".venv-build\Scripts\python.exe"
 & $py -m pip install -r requirements.txt pyinstaller
 if ($LASTEXITCODE) { throw "Falha ao instalar dependencias." }
 
-# --onedir (pasta) abre bem mais rápido que --onefile, que se descompacta a
-# cada execução. Só as imagens que o app usa: as de depuração do gerador de
-# máscaras (watershed_debug*) ficam de fora.
 & $py -m PyInstaller main.py `
     --name SistemaDeAlunos `
     --windowed `
@@ -33,7 +22,7 @@ if ($LASTEXITCODE) { throw "Falha ao instalar dependencias." }
 if ($LASTEXITCODE) { throw "Falha no PyInstaller." }
 
 $zip = "dist\SistemaDeAlunos.zip"
-# O antivírus costuma segurar os arquivos recém-gerados por alguns segundos.
+
 for ($tentativa = 1; ; $tentativa++) {
     try {
         if (Test-Path $zip) { Remove-Item $zip }

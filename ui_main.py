@@ -1,5 +1,3 @@
-"""Monta a janela principal e liga as telas (Painel de Alunos <-> Cadastro)."""
-
 from core.qt_core import QStackedWidget
 from gui.dialogs.cadastro_alunos import CadastroAlunoWizard
 from gui.pages.home import PainelAlunosPage
@@ -35,14 +33,9 @@ class UI_MainWindow:
         self.stack.setCurrentWidget(self.pagina_cadastro)
 
     def _abrir_edicao_aluno(self, aluno_id: int) -> None:
-        """Clicar num card da Home abre aquele aluno (dados + avaliações já
-        salvos) pronto para editar -- mesma tela de cadastro, só carregada
-        (ver `CadastroAlunoWizard.abrir_para_edicao`)."""
         if self.pagina_cadastro.abrir_para_edicao(aluno_id):
             self.stack.setCurrentWidget(self.pagina_cadastro)
         else:
-            # Aluno não existe mais (ex.: excluído entre a lista carregar e
-            # o clique) -- fica na Home e só atualiza a lista.
             self.pagina_home.recarregar()
 
     def _voltar_para_home(self) -> None:

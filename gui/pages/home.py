@@ -1,5 +1,3 @@
-"""Tela 1 — Painel de Alunos: busca, lista e estado vazio."""
-
 from core.qt_core import (
     QFrame,
     QHBoxLayout,
@@ -20,8 +18,6 @@ from gui.widgets.botao_principal import BotaoPrimario
 
 
 class PainelAlunosPage(QWidget):
-    """Página inicial do sistema: lista de alunos cadastrados localmente."""
-
     novo_aluno_solicitado = Signal()
     aluno_selecionado = Signal(int)
 
@@ -30,9 +26,6 @@ class PainelAlunosPage(QWidget):
         self._aluno_service = aluno_service
         self._termo_busca = ""
 
-        # Sem WA_StyledBackground, um QWidget puro (diferente de QFrame) não
-        # pinta o background definido via QSS quando usado como widget de
-        # topo — o fundo fica preto em vez de Cores.FUNDO_PAGINA.
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setStyleSheet(f"background-color: {Cores.FUNDO_PAGINA};")
 
@@ -40,7 +33,6 @@ class PainelAlunosPage(QWidget):
         layout_raiz.setContentsMargins(40, 30, 40, 30)
         layout_raiz.setSpacing(18)
 
-        # Cabeçalho -----------------------------------------------------
         titulo = QLabel("Painel de Alunos")
         titulo.setStyleSheet(
             f"color: {Cores.TEXTO_PRIMARIO}; font-size: {Fontes.TAMANHO_TITULO}px; font-weight: 700;"
@@ -52,16 +44,10 @@ class PainelAlunosPage(QWidget):
         self._barra_pesquisa.pesquisa_alterada.connect(self._on_pesquisa_alterada)
         layout_raiz.addWidget(self._barra_pesquisa)
 
-        # "Novo Aluno" fica em sua própria linha, fora da lista: o botão
-        # representa uma ação global da tela, não um item de aluno.
         layout_novo_aluno = QHBoxLayout()
         self._botao_novo_aluno = BotaoPrimario("+ Novo Aluno")
         self._botao_novo_aluno.setFixedWidth(320)
         self._botao_novo_aluno.setMinimumHeight(52)
-        # Sobrescreve só a largura/espaçamento horizontal; altura e fonte
-        # ficam bem próximas do padrão de BotaoPrimario (o ganho é só na
-        # largura). Cores e estados seguem os mesmos do botão primário
-        # padrão, para não afetar os demais botões do app.
         self._botao_novo_aluno.setStyleSheet(
             f"""
             QPushButton {{
@@ -90,7 +76,6 @@ class PainelAlunosPage(QWidget):
         layout_novo_aluno.addStretch()
         layout_raiz.addLayout(layout_novo_aluno)
 
-        # Mensagem de erro (oculta por padrão) ---------------------------
         self._label_erro = QLabel("")
         self._label_erro.setWordWrap(True)
         self._label_erro.setStyleSheet(
@@ -105,7 +90,6 @@ class PainelAlunosPage(QWidget):
         self._label_erro.hide()
         layout_raiz.addWidget(self._label_erro)
 
-        # Mensagem de sucesso (oculta por padrão) ------------------------
         self._label_sucesso = QLabel("")
         self._label_sucesso.setWordWrap(True)
         self._label_sucesso.setStyleSheet(
@@ -120,30 +104,24 @@ class PainelAlunosPage(QWidget):
         self._label_sucesso.hide()
         layout_raiz.addWidget(self._label_sucesso)
 
-        # Área de conteúdo (lista OU estado vazio) -----------------------
         self._area_conteudo = QVBoxLayout()
         self._area_conteudo.setSpacing(12)
         layout_raiz.addLayout(self._area_conteudo, stretch=1)
 
         self.recarregar()
 
-    # -- Carregamento de dados -------------------------------------------------
 
     def _on_pesquisa_alterada(self, texto: str) -> None:
         self._termo_busca = texto
         self.recarregar()
 
     def recarregar(self) -> None:
-        """Busca os alunos no banco local e atualiza a tela."""
         self._limpar_area_conteudo()
 
         label_carregando = QLabel("Carregando alunos...")
         label_carregando.setStyleSheet(f"color: {Cores.TEXTO_SECUNDARIO}; font-size: 13px;")
         self._area_conteudo.addWidget(label_carregando)
 
-        # Consulta local ao SQLite: praticamente instantânea, mas a
-        # estrutura acima garante um estado de carregamento visível caso a
-        # base de alunos cresça bastante no futuro.
         QTimer.singleShot(0, self._carregar_alunos)
 
     def _carregar_alunos(self) -> None:
@@ -158,17 +136,10 @@ class PainelAlunosPage(QWidget):
 
         self._limpar_area_conteudo()
 
-        # A barra de busca e o botão do cabeçalho só fazem sentido quando
-        # existe algo para buscar/gerenciar — sem nenhum aluno cadastrado
-        # (em todo o banco, não só no filtro atual), ficam ocultos e o
-        # estado vazio (com sua própria ação "+ Novo Aluno") ocupa o espaço.
         self._barra_pesquisa.setVisible(tem_algum_aluno)
         self._botao_novo_aluno.setVisible(tem_algum_aluno)
 
         if not tem_algum_aluno:
-            # Nenhum aluno no banco: garante o estado vazio "de verdade",
-            # mesmo que um termo de busca tenha ficado ativo (ex.: o único
-            # aluno encontrado por essa busca acabou de ser excluído).
             if self._termo_busca:
                 self._termo_busca = ""
                 self._barra_pesquisa.blockSignals(True)
@@ -180,7 +151,6 @@ class PainelAlunosPage(QWidget):
         else:
             self._montar_lista(alunos)
 
-    # -- Construção da UI --------------------------------------------------
 
     def _limpar_area_conteudo(self) -> None:
         while self._area_conteudo.count():
@@ -190,17 +160,6 @@ class PainelAlunosPage(QWidget):
                 widget.deleteLater()
 
     def _criar_moldura_lista(self) -> QFrame:
-        """Cria o container que representa visualmente 'a área da lista'.
-
-        É o mesmo container (fundo claro, borda suave, cantos arredondados)
-        usado tanto para o estado vazio quanto para a lista de cards — só o
-        conteúdo interno muda. Estilo aplicado direto na instância (sem
-        seletor de tipo "QFrame"): como QLabel também é, por herança, um
-        QFrame, um seletor de tipo vazaria essa borda para os textos e
-        cards internos. Pelo mesmo motivo, o seletor é por nome de objeto:
-        sem seletor nenhum, a borda também vazava para a barra de rolagem
-        (que virava uma caixa quadrada com contorno).
-        """
         moldura = QFrame()
         moldura.setObjectName("molduraLista")
         moldura.setStyleSheet(
@@ -263,10 +222,6 @@ class PainelAlunosPage(QWidget):
         self._area_conteudo.addWidget(moldura)
 
     def _montar_lista(self, alunos) -> None:
-        # A lista contém somente os alunos e suas ações (excluir/abrir) — a
-        # busca e o "+ Novo Aluno" pertencem ao cabeçalho, fora daqui. Tudo
-        # fica dentro da moldura (o container geral da lista); a scrollbar
-        # pertence só a essa área.
         moldura = self._criar_moldura_lista()
         layout_moldura = QVBoxLayout(moldura)
         layout_moldura.setContentsMargins(16, 16, 16, 16)
@@ -303,7 +258,6 @@ class PainelAlunosPage(QWidget):
         layout_moldura.addWidget(scroll)
         self._area_conteudo.addWidget(moldura)
 
-    # -- Exclusão de aluno -------------------------------------------------
 
     def _confirmar_exclusao(self, aluno_id: int) -> None:
         caixa = QMessageBox(self)
@@ -319,7 +273,7 @@ class PainelAlunosPage(QWidget):
         caixa.exec()
 
         if caixa.clickedButton() != botao_excluir:
-            return  # usuário cancelou: o aluno permanece intacto
+            return
 
         try:
             self._aluno_service.excluir_aluno(aluno_id)
@@ -330,7 +284,6 @@ class PainelAlunosPage(QWidget):
         self.recarregar()
         self.mostrar_sucesso("Aluno excluído com sucesso.")
 
-    # -- Foto de perfil ------------------------------------------------------
 
     def _editar_foto_perfil(self, aluno_id: int) -> None:
         aluno = self._aluno_service.buscar_por_id(aluno_id)
@@ -338,7 +291,7 @@ class PainelAlunosPage(QWidget):
             return
         dialogo = FotoPerfilDialog(aluno.foto_perfil, aluno.foto_perfil_ajuste, self)
         if not dialogo.exec():
-            return  # cancelou: mantém a foto atual
+            return
 
         try:
             self._aluno_service.atualizar_aluno(
@@ -353,7 +306,6 @@ class PainelAlunosPage(QWidget):
             "Foto de perfil atualizada." if dialogo.caminho else "Foto de perfil removida."
         )
 
-    # -- Mensagens de status -------------------------------------------------
 
     def _mostrar_erro(self, mensagem: str) -> None:
         self._label_sucesso.hide()

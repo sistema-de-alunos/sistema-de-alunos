@@ -1,6 +1,3 @@
-"""Janela do lápis do card: escolher, posicionar (arrastar/zoom) ou remover
-a foto de perfil do aluno."""
-
 from typing import Optional
 
 from core.qt_core import (
@@ -30,9 +27,6 @@ _FILTRO_IMAGENS = "Imagens (*.png *.jpg *.jpeg *.webp)"
 
 
 class _AreaAjuste(QWidget):
-    """Prévia quadrada: a foto inteira escurecida fora do círculo, que é o
-    que aparece no card. Arrastar move a foto; a roda do mouse dá zoom."""
-
     zoom_alterado = Signal(float)
 
     def __init__(self, parent=None):
@@ -56,8 +50,6 @@ class _AreaAjuste(QWidget):
         self._fixar((zoom, cx, cy))
 
     def _fixar(self, ajuste: tuple) -> None:
-        # Guarda x/y já limitados (os mesmos que `geometria_foto` usa), para
-        # arrastar além da borda não acumular um deslocamento "invisível".
         if self._pixmap is not None:
             zoom = min(max(ajuste[0], 1.0), _ZOOM_MAXIMO)
             x, y, lw, lh = geometria_foto(
@@ -99,7 +91,6 @@ class _AreaAjuste(QWidget):
         _, _, lw, lh = geometria_foto(
             self._pixmap.width(), self._pixmap.height(), _TAMANHO_AREA, self._ajuste
         )
-        # Arrastar a foto para a direita mostra o que está à esquerda dela.
         self._fixar((zoom, cx - delta.x() / lw, cy - delta.y() / lh))
 
     def mouseReleaseEvent(self, evento) -> None:
@@ -115,9 +106,6 @@ class _AreaAjuste(QWidget):
 
 
 class FotoPerfilDialog(QDialog):
-    """Depois de `exec()` aceito: `caminho` (None = sem foto) e `ajuste_texto`
-    prontos para `AlunoService.atualizar_aluno`."""
-
     def __init__(self, caminho: Optional[str], ajuste_texto: Optional[str], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Foto de perfil")

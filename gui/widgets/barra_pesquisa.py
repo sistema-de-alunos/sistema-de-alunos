@@ -1,16 +1,8 @@
-"""Campo de busca por nome do aluno, usado no Painel de Alunos."""
-
 from core.qt_core import QLineEdit, Signal
 from core.theme import Cores, Fontes
 
 
 class BarraPesquisa(QLineEdit):
-    """Campo de texto para localizar um aluno pelo nome.
-
-    A busca é feita sobre os dados já carregados localmente (SQLite), sem
-    nenhuma chamada externa.
-    """
-
     pesquisa_alterada = Signal(str)
 
     def __init__(self, parent=None):

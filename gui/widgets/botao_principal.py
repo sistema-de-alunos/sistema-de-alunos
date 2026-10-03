@@ -1,12 +1,8 @@
-"""Botões padronizados usados nas telas do sistema."""
-
 from core.qt_core import QPushButton, Qt
 from core.theme import Cores, Fontes
 
 
 class BotaoPrimario(QPushButton):
-    """Botão de destaque (ação principal da tela), em azul."""
-
     def __init__(self, texto: str, parent=None):
         super().__init__(texto, parent)
         self.setCursor(Qt.PointingHandCursor)
@@ -37,8 +33,6 @@ class BotaoPrimario(QPushButton):
 
 
 class BotaoSecundario(QPushButton):
-    """Botão neutro, usado para ações como 'Anterior'."""
-
     def __init__(self, texto: str, parent=None):
         super().__init__(texto, parent)
         self.setCursor(Qt.PointingHandCursor)

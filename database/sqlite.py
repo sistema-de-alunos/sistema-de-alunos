@@ -1,10 +1,3 @@
-"""Camada de conexão com o banco de dados local (SQLite).
-
-Nenhuma informação trafega pela internet: o arquivo do banco fica salvo no
-computador do usuário, dentro da pasta de dados do aplicativo, e continua
-disponível entre uma abertura e outra do sistema.
-"""
-
 import os
 import sqlite3
 from pathlib import Path
@@ -14,7 +7,6 @@ NOME_ARQUIVO_BANCO = "alunos.db"
 
 
 def _pasta_dados_local() -> Path:
-    """Retorna (e garante que exista) a pasta local onde o banco é salvo."""
     base = os.environ.get("APPDATA") or str(Path.home())
     pasta = Path(base) / NOME_PASTA_APP
     pasta.mkdir(parents=True, exist_ok=True)
@@ -25,11 +17,6 @@ CAMINHO_BANCO = _pasta_dados_local() / NOME_ARQUIVO_BANCO
 
 
 def obter_conexao() -> sqlite3.Connection:
-    """Abre uma conexão nova com o banco local.
-
-    Cada chamada abre e fecha sua própria conexão para manter o uso simples
-    e evitar problemas de concorrência entre a UI e as consultas.
-    """
     conexao = sqlite3.connect(str(CAMINHO_BANCO))
     conexao.row_factory = sqlite3.Row
     conexao.execute("PRAGMA foreign_keys = ON")
@@ -37,7 +24,6 @@ def obter_conexao() -> sqlite3.Connection:
 
 
 def inicializar_banco() -> None:
-    """Cria as tabelas necessárias caso ainda não existam."""
     conexao = obter_conexao()
     try:
         conexao.execute(
@@ -101,16 +87,6 @@ def inicializar_banco() -> None:
 
 
 def _criar_tabelas_avaliacoes(conexao: sqlite3.Connection) -> None:
-    """Cria as tabelas de avaliações (Etapas 6 e 7), uma linha por avaliação.
-
-    Um aluno pode ter várias avaliações -- por isso cada uma vive em sua
-    própria linha, referenciando o aluno por `aluno_id` (nunca um novo
-    conjunto de colunas soltas na tabela `alunos`, que só guarda o cadastro
-    básico, sem duplicação). `ON DELETE CASCADE` (com `PRAGMA foreign_keys =
-    ON`, já ligado em `obter_conexao`) garante que excluir um aluno também
-    remove suas avaliações -- sem isso ficariam linhas órfãs apontando para
-    um `aluno_id` que não existe mais.
-    """
     conexao.execute(
         """
         CREATE TABLE IF NOT EXISTS avaliacoes_circunferencias (
@@ -174,7 +150,6 @@ def _criar_tabelas_avaliacoes(conexao: sqlite3.Connection) -> None:
         """
     )
 
-    # Etapa 8: uma linha por sessão de fotos (data + as 4 posições).
     conexao.execute(
         """
         CREATE TABLE IF NOT EXISTS sessoes_fotos (
@@ -198,9 +173,6 @@ def _criar_tabelas_avaliacoes(conexao: sqlite3.Connection) -> None:
 
 
 def _migrar_fotos_para_sessoes(conexao: sqlite3.Connection) -> None:
-    """Antes das sessões, as 4 fotos ficavam em colunas de `alunos`: elas
-    viram a Sessão 1 (sem data) de quem ainda não tem sessão nenhuma -- só
-    uma vez, já que o app não grava mais nessas colunas."""
     conexao.execute(
         """
         INSERT INTO sessoes_fotos (aluno_id, foto_frente, foto_costas, foto_lado_direito, foto_lado_esquerdo)
@@ -212,21 +184,10 @@ def _migrar_fotos_para_sessoes(conexao: sqlite3.Connection) -> None:
 
 
 def _garantir_colunas_anamnese(conexao: sqlite3.Connection) -> None:
-    """Adiciona as colunas das etapas de Anamnese a bancos criados antes delas existirem.
-
-    `CREATE TABLE IF NOT EXISTS` não altera uma tabela já existente, então um
-    banco salvo por uma versão anterior do app fica sem essas colunas — daí a
-    checagem via PRAGMA e o ALTER TABLE incremental abaixo.
-    """
     colunas_existentes = {
         linha["name"] for linha in conexao.execute("PRAGMA table_info(alunos)")
     }
 
-    # A altura da Etapa 1 passou de centímetros ("altura_cm") para o formato
-    # metros.centímetros ("altura_m", ex.: 1.75) -- bancos criados no
-    # intervalo curto entre as duas versões têm a coluna antiga. Renomeia em
-    # vez de duplicar, convertendo os valores já salvos (cm -> m) em vez de
-    # perdê-los.
     if "altura_cm" in colunas_existentes and "altura_m" not in colunas_existentes:
         conexao.execute("ALTER TABLE alunos RENAME COLUMN altura_cm TO altura_m")
         conexao.execute("UPDATE alunos SET altura_m = altura_m / 100.0 WHERE altura_m IS NOT NULL")
@@ -249,25 +210,17 @@ def _garantir_colunas_anamnese(conexao: sqlite3.Connection) -> None:
         "dor_qual",
         "cirurgia_tem",
         "cirurgia_qual",
-        # Hábitos de vida (última tela da anamnese): "Sim"/"Não".
         "medicamento_controlado",
         "fazendo_dieta",
         "consumo_alcool",
         "fuma",
-        # Etapa 8 (Registro de imagens) -- caminho do arquivo escolhido em
-        # cada uma das 4 posições, não dado de anamnese, mas some junto às
-        # demais colunas de texto opcionais pelo mesmo mecanismo incremental.
         "foto_frente",
         "foto_costas",
         "foto_lado_direito",
         "foto_lado_esquerdo",
-        # Foto de perfil do card da lista (lápis ao lado da lixeira).
         "foto_perfil",
         "foto_perfil_ajuste",
     )
-    # Medidas da Etapa 6 (avaliação física) e a altura da Etapa 1 são
-    # numéricas -- REAL, não TEXT, para não perder o tipo ao ler de volta um
-    # banco criado antes delas.
     colunas_novas_numericas = (
         "altura_m",
         "medida_ombro",

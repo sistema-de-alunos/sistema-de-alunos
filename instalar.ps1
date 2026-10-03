@@ -1,14 +1,5 @@
-# Instalador do Sistema de Alunos -- o cliente só cola no CMD:
-#
-#   powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol='Tls12'; irm https://raw.githubusercontent.com/sistema-de-alunos/sistema-de-alunos/main/instalar.ps1 | iex"
-#
-# Baixa a versão mais recente (Release do GitHub), instala na pasta do
-# usuário (sem pedir administrador), cria os atalhos e abre o app. Rodar de
-# novo atualiza para a versão mais nova. Os dados (alunos, avaliações) ficam
-# em %APPDATA%\SistemaDeAlunos e NÃO são tocados.
-
 $ErrorActionPreference = "Stop"
-$ProgressPreference = "SilentlyContinue"  # sem isto o download fica muito lento no PowerShell 5
+$ProgressPreference = "SilentlyContinue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $nome = "Sistema de Alunos"
@@ -20,7 +11,6 @@ $zip = Join-Path $env:TEMP "SistemaDeAlunos.zip"
 try {
     Write-Host "Instalando $nome..." -ForegroundColor Cyan
 
-    # Atualização: fecha o app se estiver aberto (senão os arquivos ficam presos).
     Get-Process SistemaDeAlunos -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Milliseconds 500
 

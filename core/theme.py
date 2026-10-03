@@ -1,10 +1,3 @@
-"""Paleta de cores e constantes visuais compartilhadas pela interface.
-
-Centralizar essas definições evita duplicar códigos de cor em cada widget e
-mantém a aparência consistente enquanto novas telas forem adicionadas.
-"""
-
-
 class Cores:
     FUNDO = "#F5F7FA"
     FUNDO_PAGINA = "#DCE8EB"
@@ -16,7 +9,7 @@ class Cores:
 
     TEXTO_PRIMARIO = "#1F2937"
     TEXTO_SECUNDARIO = "#6B7280"
-    TEXTO_DESCRICAO = "#374151"  # meio-termo: mais destaque que o secundário, sem virar título
+    TEXTO_DESCRICAO = "#374151"
 
     AZUL_PRIMARIO = "#2F6FED"
     AZUL_ESCURO = "#1E4FBF"
@@ -42,9 +35,6 @@ class Fontes:
     TAMANHO_TEXTO = 14
 
 
-# Barra de rolagem arredondada do app inteiro (aplicada em `main.py` via
-# `QApplication.setStyleSheet`): trilho e alça em pílula, sem as setas
-# quadradas do estilo nativo do Windows.
 ESTILO_BARRA_ROLAGEM = f"""
 QScrollBar:vertical {{
     background: transparent;
