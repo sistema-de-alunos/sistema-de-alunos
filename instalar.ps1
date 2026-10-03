@@ -8,12 +8,20 @@ $destino = Join-Path $env:LOCALAPPDATA "Programs\SistemaDeAlunos"
 $exe = Join-Path $destino "SistemaDeAlunos.exe"
 $zip = Join-Path $env:TEMP "SistemaDeAlunos.zip"
 
-try {
-    Write-Host "Instalando $nome..." -ForegroundColor Cyan
+Write-Host "Instalando $nome..." -ForegroundColor Cyan
 
+try {
     Get-Process SistemaDeAlunos -ErrorAction SilentlyContinue | Stop-Process -Force
     Start-Sleep -Milliseconds 500
+}
+catch {
+    Write-Host ""
+    Write-Host "O $nome esta aberto e nao pode ser fechado automaticamente." -ForegroundColor Red
+    Write-Host "Feche o $nome e execute o comando novamente."
+    return
+}
 
+try {
     Write-Host "Baixando a versao mais recente..."
     Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
 
