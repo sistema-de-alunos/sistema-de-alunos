@@ -17,6 +17,10 @@ _COLUNAS_CIRCUNFERENCIA = (
     "antebraco_e", "antebraco_d", "coxa_e", "coxa_d",
     "panturrilha_e", "panturrilha_d",
 )
+_COLUNAS_SESSAO_FOTOS = (
+    "data", "foto_frente", "foto_costas", "foto_lado_direito", "foto_lado_esquerdo",
+)
+
 _COLUNAS_COMPOSICAO = (
     "data", "peso", "triceps", "peito", "axilar_media", "subescapular",
     "dobra_abdominal", "supra_iliaca", "coxa_dobra", "soma_dobras",
@@ -55,6 +59,10 @@ class Aluno:
     dor_qual: Optional[str] = None
     cirurgia_tem: Optional[str] = None
     cirurgia_qual: Optional[str] = None
+    medicamento_controlado: Optional[str] = None
+    fazendo_dieta: Optional[str] = None
+    consumo_alcool: Optional[str] = None
+    fuma: Optional[str] = None
     medida_ombro: Optional[float] = None
     medida_torax: Optional[float] = None
     medida_cintura: Optional[float] = None
@@ -103,6 +111,10 @@ class AlunoService:
         dor_qual: Optional[str] = None,
         cirurgia_tem: Optional[str] = None,
         cirurgia_qual: Optional[str] = None,
+        medicamento_controlado: Optional[str] = None,
+        fazendo_dieta: Optional[str] = None,
+        consumo_alcool: Optional[str] = None,
+        fuma: Optional[str] = None,
         medida_ombro: Optional[float] = None,
         medida_torax: Optional[float] = None,
         medida_cintura: Optional[float] = None,
@@ -139,6 +151,7 @@ class AlunoService:
                     limitacao_tem, limitacao_qual,
                     dor_tem, dor_qual,
                     cirurgia_tem, cirurgia_qual,
+                    medicamento_controlado, fazendo_dieta, consumo_alcool, fuma,
                     medida_ombro, medida_torax, medida_cintura,
                     medida_abdominal, medida_quadril,
                     medida_braco_e, medida_braco_e_contraido,
@@ -152,7 +165,8 @@ class AlunoService:
                 )
                 VALUES (
                     ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?
                 )
                 """,
                 (
@@ -164,6 +178,7 @@ class AlunoService:
                     limitacao_tem, limitacao_qual,
                     dor_tem, dor_qual,
                     cirurgia_tem, cirurgia_qual,
+                    medicamento_controlado, fazendo_dieta, consumo_alcool, fuma,
                     medida_ombro, medida_torax, medida_cintura,
                     medida_abdominal, medida_quadril,
                     medida_braco_e, medida_braco_e_contraido,
@@ -291,6 +306,10 @@ class AlunoService:
             dor_qual=linha["dor_qual"],
             cirurgia_tem=linha["cirurgia_tem"],
             cirurgia_qual=linha["cirurgia_qual"],
+            medicamento_controlado=linha["medicamento_controlado"],
+            fazendo_dieta=linha["fazendo_dieta"],
+            consumo_alcool=linha["consumo_alcool"],
+            fuma=linha["fuma"],
             medida_ombro=linha["medida_ombro"],
             medida_torax=linha["medida_torax"],
             medida_cintura=linha["medida_cintura"],
@@ -393,6 +412,39 @@ class AlunoService:
                     [aluno_id, *valores],
                 )
             conexao.commit()
+        finally:
+            conexao.close()
+
+    # -- Sessões de fotos (Etapa 8) -----------------------------------------
+
+    def adicionar_sessoes_fotos(self, aluno_id: int, sessoes: List[Dict[str, Any]]) -> None:
+        """Mesmo mecanismo das avaliações (só INSERT, nunca apaga/sobrescreve
+        uma sessão já salva)."""
+        if not sessoes:
+            return
+        colunas = ", ".join(_COLUNAS_SESSAO_FOTOS)
+        marcadores = ", ".join("?" for _ in _COLUNAS_SESSAO_FOTOS)
+        conexao = obter_conexao()
+        try:
+            for sessao in sessoes:
+                conexao.execute(
+                    f"INSERT INTO sessoes_fotos (aluno_id, {colunas}) VALUES (?, {marcadores})",
+                    [aluno_id, *(sessao.get(coluna) for coluna in _COLUNAS_SESSAO_FOTOS)],
+                )
+            conexao.commit()
+        finally:
+            conexao.close()
+
+    def listar_sessoes_fotos(self, aluno_id: int) -> List[Dict[str, Any]]:
+        """Sessões de fotos de UM aluno, na ordem em que foram criadas."""
+        colunas = ", ".join(_COLUNAS_SESSAO_FOTOS)
+        conexao = obter_conexao()
+        try:
+            linhas = conexao.execute(
+                f"SELECT {colunas} FROM sessoes_fotos WHERE aluno_id = ? ORDER BY id ASC",
+                (aluno_id,),
+            ).fetchall()
+            return [dict(linha) for linha in linhas]
         finally:
             conexao.close()
 

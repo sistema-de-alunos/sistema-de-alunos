@@ -2,6 +2,7 @@
 
 from core.qt_core import (
     QByteArray,
+    QColor,
     QFrame,
     QHBoxLayout,
     QIcon,
@@ -75,14 +76,15 @@ def ler_ajuste(texto) -> tuple:
 
 def geometria_foto(largura: int, altura: int, tamanho: int, ajuste: tuple) -> tuple:
     """Retângulo (x, y, largura, altura) onde desenhar a foto num quadrado de
-    `tamanho` px, já com x/y limitados para a foto nunca deixar o círculo
-    com buraco."""
+    `tamanho` px. `cx`/`cy` (0-1) é o ponto da foto que fica no centro do
+    círculo -- qualquer ponto, nas duas direções (antes era limitado para a
+    foto sempre cobrir o círculo, o que travava um dos eixos: numa foto
+    deitada, por exemplo, não dava para subir/descer)."""
     zoom, cx, cy = ajuste
     escala = max(tamanho / largura, tamanho / altura) * zoom
     lw, lh = largura * escala, altura * escala
-    meio_x, meio_y = tamanho / 2 / lw, tamanho / 2 / lh
-    cx = min(max(cx, meio_x), 1 - meio_x)
-    cy = min(max(cy, meio_y), 1 - meio_y)
+    cx = min(max(cx, 0.0), 1.0)
+    cy = min(max(cy, 0.0), 1.0)
     return (tamanho / 2 - cx * lw, tamanho / 2 - cy * lh, lw, lh)
 
 
@@ -97,6 +99,8 @@ def recortar_circulo(original: QPixmap, tamanho: int, ajuste: tuple = AJUSTE_PAD
     recorte = QPainterPath()
     recorte.addEllipse(0, 0, tamanho, tamanho)
     painter.setClipPath(recorte)
+    # Onde a foto não cobre o círculo (foto deslocada), fundo neutro.
+    painter.fillRect(0, 0, tamanho, tamanho, QColor(Cores.FUNDO))
     painter.drawPixmap(QRectF(x, y, lw, lh), original, QRectF(original.rect()))
     painter.end()
     return resultado

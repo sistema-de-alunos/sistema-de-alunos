@@ -63,6 +63,10 @@ def inicializar_banco() -> None:
                 dor_qual TEXT,
                 cirurgia_tem TEXT,
                 cirurgia_qual TEXT,
+                medicamento_controlado TEXT,
+                fazendo_dieta TEXT,
+                consumo_alcool TEXT,
+                fuma TEXT,
                 medida_ombro REAL,
                 medida_torax REAL,
                 medida_cintura REAL,
@@ -90,6 +94,7 @@ def inicializar_banco() -> None:
         )
         _garantir_colunas_anamnese(conexao)
         _criar_tabelas_avaliacoes(conexao)
+        _migrar_fotos_para_sessoes(conexao)
         conexao.commit()
     finally:
         conexao.close()
@@ -169,6 +174,42 @@ def _criar_tabelas_avaliacoes(conexao: sqlite3.Connection) -> None:
         """
     )
 
+    # Etapa 8: uma linha por sessão de fotos (data + as 4 posições).
+    conexao.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sessoes_fotos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            aluno_id INTEGER NOT NULL REFERENCES alunos(id) ON DELETE CASCADE,
+            data TEXT,
+            foto_frente TEXT,
+            foto_costas TEXT,
+            foto_lado_direito TEXT,
+            foto_lado_esquerdo TEXT,
+            criado_em TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+        )
+        """
+    )
+    conexao.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_sessoes_fotos_aluno_id
+        ON sessoes_fotos(aluno_id)
+        """
+    )
+
+
+def _migrar_fotos_para_sessoes(conexao: sqlite3.Connection) -> None:
+    """Antes das sessões, as 4 fotos ficavam em colunas de `alunos`: elas
+    viram a Sessão 1 (sem data) de quem ainda não tem sessão nenhuma -- só
+    uma vez, já que o app não grava mais nessas colunas."""
+    conexao.execute(
+        """
+        INSERT INTO sessoes_fotos (aluno_id, foto_frente, foto_costas, foto_lado_direito, foto_lado_esquerdo)
+        SELECT id, foto_frente, foto_costas, foto_lado_direito, foto_lado_esquerdo FROM alunos
+        WHERE COALESCE(foto_frente, foto_costas, foto_lado_direito, foto_lado_esquerdo) IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM sessoes_fotos WHERE sessoes_fotos.aluno_id = alunos.id)
+        """
+    )
+
 
 def _garantir_colunas_anamnese(conexao: sqlite3.Connection) -> None:
     """Adiciona as colunas das etapas de Anamnese a bancos criados antes delas existirem.
@@ -208,6 +249,11 @@ def _garantir_colunas_anamnese(conexao: sqlite3.Connection) -> None:
         "dor_qual",
         "cirurgia_tem",
         "cirurgia_qual",
+        # Hábitos de vida (última tela da anamnese): "Sim"/"Não".
+        "medicamento_controlado",
+        "fazendo_dieta",
+        "consumo_alcool",
+        "fuma",
         # Etapa 8 (Registro de imagens) -- caminho do arquivo escolhido em
         # cada uma das 4 posições, não dado de anamnese, mas some junto às
         # demais colunas de texto opcionais pelo mesmo mecanismo incremental.

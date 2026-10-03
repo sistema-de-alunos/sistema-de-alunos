@@ -1315,10 +1315,14 @@ class _PerguntaSaude(QWidget):
     aloca espaço para widgets escondidos) e alterna de visibilidade sozinho,
     ligado ao próprio estado do botão "Sim": marcou Sim → aparece; marcou Não
     (o que desmarca o Sim, já que o grupo é exclusivo) → some.
+
+    `com_qual=False` (usado por `HabitosVidaStep`): só Sim/Não, sem o
+    campo "Qual?".
     """
 
-    def __init__(self, texto_pergunta: str, parent=None):
+    def __init__(self, texto_pergunta: str, parent=None, com_qual: bool = True):
         super().__init__(parent)
+        self._com_qual = com_qual
 
         # QVBoxLayout raiz (linha de controles + label de erro abaixo, este
         # oculto por padrão) em vez do QHBoxLayout único de antes: mesmo
@@ -1384,7 +1388,8 @@ class _PerguntaSaude(QWidget):
         self._campo_qual.hide()
         layout.addWidget(self._campo_qual, stretch=1)
 
-        self._botao_sim.toggled.connect(self._campo_qual.setVisible)
+        if com_qual:
+            self._botao_sim.toggled.connect(self._campo_qual.setVisible)
         # Selecionar Sim/Não de novo ou corrigir o texto invalida o erro
         # anterior — sem isto ele ficaria preso na tela mesmo já corrigido.
         self._botao_sim.toggled.connect(lambda _: self.limpar_erro())
@@ -1409,7 +1414,7 @@ class _PerguntaSaude(QWidget):
             self._mostrar_erro("Selecione uma opção.")
             return False
 
-        if tem == "Sim" and not qual:
+        if tem == "Sim" and self._com_qual and not qual:
             self._mostrar_erro("Preencha esse campo.")
             self._campo_qual.setStyleSheet(self._estilo_qual_erro)
             return False
@@ -1558,6 +1563,85 @@ class HistoricoSaudeStep(QWidget):
             pergunta.definir_resposta(dados.get(f"{chave}_tem"), dados.get(f"{chave}_qual"))
 
 
+# -- Hábitos de vida (última tela da anamnese, entre a Etapa 5 e a 6) -------
+
+# (coluna no banco, texto da pergunta) -- só Sim/Não, sem "Qual?".
+_PERGUNTAS_HABITOS = [
+    ("medicamento_controlado", "Medicamento controlado?"),
+    ("fazendo_dieta", "Está fazendo dieta?"),
+    ("consumo_alcool", "Consumo de álcool?"),
+    ("fuma", "Fuma?"),
+]
+
+
+class HabitosVidaStep(QWidget):
+    """Última tela da anamnese: medicamento controlado, dieta, álcool e
+    fumo. Mesmo layout/validação da Etapa 5, só sem o campo "Qual?"."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        layout_raiz = QVBoxLayout(self)
+        layout_raiz.setContentsMargins(0, 0, 0, 0)
+        layout_raiz.setSpacing(18)
+
+        # Cabeçalho — mesmo banner azul das demais etapas da anamnese.
+        cabecalho = QFrame()
+        cabecalho.setStyleSheet(
+            f"background-color: {Cores.AZUL_ESCURO}; border-radius: 14px;"
+        )
+        layout_cabecalho = QVBoxLayout(cabecalho)
+        layout_cabecalho.setContentsMargins(28, 20, 28, 20)
+        layout_cabecalho.setSpacing(4)
+
+        titulo_cabecalho = QLabel("Anamnese")
+        titulo_cabecalho.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: white; font-size: {Fontes.TAMANHO_TITULO}px; font-weight: 700;"
+        )
+        layout_cabecalho.addWidget(titulo_cabecalho)
+
+        subtitulo_cabecalho = QLabel("Etapa 6: Hábitos de vida")
+        subtitulo_cabecalho.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: white; font-size: {Fontes.TAMANHO_TEXTO}px; font-weight: 500;"
+        )
+        layout_cabecalho.addWidget(subtitulo_cabecalho)
+
+        layout_raiz.addWidget(cabecalho)
+
+        cartao = _criar_cartao()
+        layout_cartao = QVBoxLayout(cartao)
+        layout_cartao.setContentsMargins(28, 24, 28, 24)
+        layout_cartao.setSpacing(20)
+
+        self._perguntas = {}
+        for chave, texto in _PERGUNTAS_HABITOS:
+            pergunta = _PerguntaSaude(texto, com_qual=False)
+            self._perguntas[chave] = pergunta
+            layout_cartao.addWidget(pergunta)
+
+        layout_raiz.addWidget(cartao)
+        layout_raiz.addStretch(1)
+
+    def obter_dados_validados(self):
+        """As quatro perguntas são obrigatórias (Sim ou Não)."""
+        invalidas = [p for p in self._perguntas.values() if not p.validar()]
+        if invalidas:
+            invalidas[0].focar_invalido()
+            return None
+        return {chave: pergunta.obter_resposta()[0] for chave, pergunta in self._perguntas.items()}
+
+    def limpar(self) -> None:
+        for pergunta in self._perguntas.values():
+            pergunta.limpar()
+
+    def carregar_dados(self, dados: dict) -> None:
+        """Preenche a etapa com os dados já salvos de um aluno existente."""
+        for chave, pergunta in self._perguntas.items():
+            pergunta.definir_resposta(dados.get(chave), None)
+
+
 # -- Etapa 6: Avaliação física ----------------------------------------------
 
 
@@ -1680,31 +1764,6 @@ class AvaliacaoFisicaStep(QWidget):
         layout_raiz = QVBoxLayout(self)
         layout_raiz.setContentsMargins(0, 0, 0, 0)
         layout_raiz.setSpacing(18)
-
-        # Cabeçalho — mesmo banner azul das demais etapas da anamnese.
-        cabecalho = QFrame()
-        cabecalho.setStyleSheet(
-            f"background-color: {Cores.AZUL_ESCURO}; border-radius: 14px;"
-        )
-        layout_cabecalho = QVBoxLayout(cabecalho)
-        layout_cabecalho.setContentsMargins(28, 20, 28, 20)
-        layout_cabecalho.setSpacing(4)
-
-        titulo_cabecalho = QLabel("Anamnese")
-        titulo_cabecalho.setStyleSheet(
-            f"background: transparent; border: none; "
-            f"color: white; font-size: {Fontes.TAMANHO_TITULO}px; font-weight: 700;"
-        )
-        layout_cabecalho.addWidget(titulo_cabecalho)
-
-        subtitulo_cabecalho = QLabel("Etapa 6: Avaliação física")
-        subtitulo_cabecalho.setStyleSheet(
-            f"background: transparent; border: none; "
-            f"color: white; font-size: {Fontes.TAMANHO_TEXTO}px; font-weight: 500;"
-        )
-        layout_cabecalho.addWidget(subtitulo_cabecalho)
-
-        layout_raiz.addWidget(cabecalho)
 
         # Card com a tabela de circunferências (esquerda) + boneco
         # interativo (direita).
@@ -1996,9 +2055,10 @@ class AvaliacaoFisicaStep(QWidget):
         self._coluna_ativa = self._num_colunas - 1
 
         for coluna, avaliacao in enumerate(avaliacoes):
+            # Sempre a data salva -- sem data no banco, fica sem data (nunca
+            # a de hoje, que a coluna recebeu ao ser criada).
             data_valida = _qdate_de_texto(avaliacao.get("data"))
-            if data_valida is not None:
-                self._campos_circunferencias["datas"][coluna].setDate(data_valida)
+            self._campos_circunferencias["datas"][coluna].setDate(data_valida or _DATA_SENTINELA)
             for chave, _rotulo, tipo, _maximo in _LINHAS_CIRCUNFERENCIAS:
                 if tipo != "numero":
                     continue
@@ -2417,8 +2477,18 @@ class _CampoData(QWidget):
         self._botao_calendario.setEnabled(not somente_leitura)
 
 
+def _data_local_hoje() -> QDate:
+    """Data de hoje no relógio LOCAL do computador (nunca UTC)."""
+    return QDate.currentDate()
+
+
 def _criar_campo_data() -> _CampoData:
-    return _CampoData()
+    """Data de uma avaliação/sessão NOVA: já nasce com a data de hoje
+    (editável pelo calendário ou digitação). Avaliações já salvas
+    sobrescrevem com a data do banco ao carregar (ver `carregar_avaliacoes`)."""
+    campo = _CampoData()
+    campo.setDate(_data_local_hoje())
+    return campo
 
 
 def _criar_label_resultado() -> QLabel:
@@ -2588,7 +2658,8 @@ def _limpar_widget(widget: QWidget) -> None:
     de acordo com seu tipo -- usado por `ComposicaoCorporalStep.limpar()`.
     """
     if isinstance(widget, _CampoData):
-        widget.setDate(_DATA_SENTINELA)
+        # Coluna volta a ser uma avaliação nova: data de hoje.
+        widget.setDate(_data_local_hoje())
     elif isinstance(widget, QLabel):
         widget.setText("—")
         widget.setToolTip("")
@@ -2846,31 +2917,6 @@ class ComposicaoCorporalStep(QWidget):
         layout_raiz = QVBoxLayout(self)
         layout_raiz.setContentsMargins(0, 0, 0, 0)
         layout_raiz.setSpacing(18)
-
-        # Cabeçalho -- mesmo banner azul das demais etapas da anamnese.
-        cabecalho = QFrame()
-        cabecalho.setStyleSheet(
-            f"background-color: {Cores.AZUL_ESCURO}; border-radius: 14px;"
-        )
-        layout_cabecalho = QVBoxLayout(cabecalho)
-        layout_cabecalho.setContentsMargins(28, 20, 28, 20)
-        layout_cabecalho.setSpacing(4)
-
-        titulo_cabecalho = QLabel("Anamnese")
-        titulo_cabecalho.setStyleSheet(
-            f"background: transparent; border: none; "
-            f"color: white; font-size: {Fontes.TAMANHO_TITULO}px; font-weight: 700;"
-        )
-        layout_cabecalho.addWidget(titulo_cabecalho)
-
-        subtitulo_cabecalho = QLabel("Etapa 7: Composição corporal")
-        subtitulo_cabecalho.setStyleSheet(
-            f"background: transparent; border: none; "
-            f"color: white; font-size: {Fontes.TAMANHO_TEXTO}px; font-weight: 500;"
-        )
-        layout_cabecalho.addWidget(subtitulo_cabecalho)
-
-        layout_raiz.addWidget(cabecalho)
 
         # Card com tabelas (esquerda) + imagem músculo x gordura (direita) --
         # mesma divisão em duas colunas da Etapa 6 (tabela + boneco).
@@ -3397,9 +3443,9 @@ class ComposicaoCorporalStep(QWidget):
             self._num_colunas += 1
 
         for coluna, avaliacao in enumerate(avaliacoes):
+            # Mesmo cuidado da Etapa 6: sempre a data salva.
             data_valida = _qdate_de_texto(avaliacao.get("data"))
-            if data_valida is not None:
-                self._campos_dobras_reais["datas"][coluna].setDate(data_valida)
+            self._campos_dobras_reais["datas"][coluna].setDate(data_valida or _DATA_SENTINELA)
 
             for chave in _CHAVES_DOBRAS_7:
                 valor = avaliacao.get(chave)
@@ -3537,7 +3583,7 @@ class _CardFotoAluno(QFrame):
 
     solicitar_imagem = Signal()
 
-    def __init__(self, titulo: str, parent=None):
+    def __init__(self, titulo: Optional[str], parent=None):
         super().__init__(parent)
         self.setStyleSheet(
             f"""
@@ -3556,13 +3602,15 @@ class _CardFotoAluno(QFrame):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
 
-        label_titulo = QLabel(titulo)
-        label_titulo.setAlignment(Qt.AlignCenter)
-        label_titulo.setStyleSheet(
-            f"background: transparent; border: none; "
-            f"color: {Cores.TEXTO_PRIMARIO}; font-size: {Fontes.TAMANHO_LABEL}px; font-weight: 600;"
-        )
-        layout.addWidget(label_titulo)
+        # Sem título: botão "+" de nova sessão de fotos (`ImagensAlunoStep`).
+        if titulo:
+            label_titulo = QLabel(titulo)
+            label_titulo.setAlignment(Qt.AlignCenter)
+            label_titulo.setStyleSheet(
+                f"background: transparent; border: none; "
+                f"color: {Cores.TEXTO_PRIMARIO}; font-size: {Fontes.TAMANHO_LABEL}px; font-weight: 600;"
+            )
+            layout.addWidget(label_titulo)
 
         self._area = _AreaFotoClicavel()
         self._area.clicada.connect(self.solicitar_imagem.emit)
@@ -3593,22 +3641,26 @@ _ALTURA_MINIMA_CARD_FOTO = 100
 _ALTURA_MAXIMA_CARD_FOTO = 420  # teto de bom senso p/ monitores bem altos
 _ESPACAMENTO_GRADE_FOTOS = 18
 _MARGEM_PAINEL_FOTOS = 20
+# Botão "+" de nova sessão: "altura média" -- fração da altura de um card de
+# foto (mesma razão largura:altura deles).
+_RAZAO_ALTURA_BOTAO_NOVA_SESSAO = 0.65
+_MARGEM_TOPO_SESSAO_FOTOS = 12
+_ESPACO_CABECALHO_SESSAO_FOTOS = 8
 
 
 class _PainelFotosAluno(QFrame):
-    """Painel branco com a grade 2x2 dos 4 cards de foto.
+    """Uma SESSÃO de fotos: painel branco com "Sessão N" + data no topo e a
+    grade 2x2 dos 4 cards de foto (frente, costa, lado direito, lado
+    esquerdo) -- cada sessão é uma avaliação fotográfica própria, como uma
+    coluna das Etapas 6/7 (ver `ImagensAlunoStep`).
 
     Ao contrário do cartão padrão do cadastro (`_criar_cartao()`, sempre
     esticado à largura inteira da etapa pelo QVBoxLayout que o contém),
     este painel ACOMPANHA o tamanho real do conteúdo: sua LARGURA é sempre
     recalculada a partir da própria ALTURA (livre para crescer/encolher com
-    a janela, via stretch no layout da etapa -- ver `ImagensAlunoStep`) já
-    somando as margens internas, então não sobra faixa de branco vazio nas
-    laterais como no cartão padrão (especificação: "o container deve
-    acompanhar melhor o tamanho real dos quatro cards"). Por isso precisa
-    ser adicionado ao layout da etapa com alinhamento horizontal central
-    (`Qt.AlignHCenter`) -- sem stretch nem alinhamento vertical, então a
-    altura continua livre (fill), só a largura passa a ser a nossa.
+    a janela) já somando as margens internas, então não sobra faixa de
+    branco vazio nas laterais como no cartão padrão (especificação: "o
+    container deve acompanhar melhor o tamanho real dos quatro cards").
 
     A altura de cada card é sempre metade da altura disponível (dividida
     pelas 2 linhas da grade) -- ela já usa o espaço vertical inteiro, sem
@@ -3616,7 +3668,10 @@ class _PainelFotosAluno(QFrame):
     contrário (especificação: "não aumentar automaticamente a largura").
     """
 
-    def __init__(self, cards, parent=None):
+    # Avisa a etapa que o tamanho dos cards mudou (o "+" acompanha).
+    tamanho_card_mudou = Signal(QSize)
+
+    def __init__(self, numero: int, parent=None):
         super().__init__(parent)
         self.setStyleSheet(
             f"""
@@ -3627,27 +3682,79 @@ class _PainelFotosAluno(QFrame):
             }}
             """
         )
-        self._cards = list(cards)
+        self.bloqueada = False
 
-        self._grade = QGridLayout(self)
-        self._grade.setContentsMargins(
-            _MARGEM_PAINEL_FOTOS, _MARGEM_PAINEL_FOTOS,
+        self.cards: Dict[str, _CardFotoAluno] = {
+            chave: _CardFotoAluno(titulo) for chave, titulo in _SLOTS_FOTOS
+        }
+
+        # Cabeçalho da sessão: número + data própria (mesmo `_CampoData` das
+        # Etapas 6/7).
+        self._cabecalho = QWidget()
+        self._cabecalho.setStyleSheet("background: transparent; border: none;")
+        layout_cabecalho = QHBoxLayout(self._cabecalho)
+        layout_cabecalho.setContentsMargins(0, 0, 0, 0)
+        layout_cabecalho.setSpacing(8)
+        titulo = QLabel(f"Sessão {numero}")
+        titulo.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: {Cores.TEXTO_PRIMARIO}; font-size: {Fontes.TAMANHO_LABEL}px; font-weight: 700;"
+        )
+        layout_cabecalho.addWidget(titulo)
+        layout_cabecalho.addStretch(1)
+        rotulo_data = QLabel("Data:")
+        rotulo_data.setStyleSheet(
+            f"background: transparent; border: none; "
+            f"color: {Cores.TEXTO_PRIMARIO}; font-size: 13px; font-weight: 600;"
+        )
+        layout_cabecalho.addWidget(rotulo_data)
+        self.campo_data = _criar_campo_data()
+        self.campo_data._linha.setPlaceholderText("dd/mm/aaaa")
+        self.campo_data.setFixedWidth(120)
+        layout_cabecalho.addWidget(self.campo_data)
+
+        # Cabeçalho compacto (margem de cima e espaço até os cards menores
+        # que os da grade) -- é altura que sai dos cards.
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(
+            _MARGEM_PAINEL_FOTOS, _MARGEM_TOPO_SESSAO_FOTOS,
             _MARGEM_PAINEL_FOTOS, _MARGEM_PAINEL_FOTOS,
         )
+        layout.setSpacing(_ESPACO_CABECALHO_SESSAO_FOTOS)
+        layout.addWidget(self._cabecalho)
+        self._grade = QGridLayout()
+        self._grade.setContentsMargins(0, 0, 0, 0)
         self._grade.setHorizontalSpacing(_ESPACAMENTO_GRADE_FOTOS)
         self._grade.setVerticalSpacing(_ESPACAMENTO_GRADE_FOTOS)
-        for indice, card in enumerate(self._cards):
+        for indice, card in enumerate(self.cards.values()):
             self._grade.addWidget(card, indice // 2, indice % 2)
+        layout.addLayout(self._grade)
 
-        self._recalcular()
+    def definir_bloqueada(self, bloqueada: bool) -> None:
+        """Sessão já salva: data e fotos só para consulta (mesma regra das
+        avaliações salvas das Etapas 6/7). Os cards não são desabilitados
+        (o Qt desenharia as fotos acinzentadas) -- a etapa ignora o clique."""
+        self.bloqueada = bloqueada
+        self.campo_data.definir_somente_leitura(bloqueada)
+        for card in self.cards.values():
+            card._area.setCursor(Qt.ArrowCursor if bloqueada else Qt.PointingHandCursor)
 
-    def resizeEvent(self, evento) -> None:
-        super().resizeEvent(evento)
-        self._recalcular()
+    def dados(self) -> dict:
+        dados = {"data": _valor_data(self.campo_data)}
+        dados.update({chave: card.caminho_imagem for chave, card in self.cards.items()})
+        return dados
 
-    def _recalcular(self) -> None:
-        espaco_v = self._grade.verticalSpacing()
-        altura_disponivel = self.height() - 2 * _MARGEM_PAINEL_FOTOS - espaco_v
+    def ajustar(self, altura_total: int) -> None:
+        """Dimensiona os cards para o painel caber em `altura_total` (a
+        altura da área das sessões -- não a do próprio painel: dentro da
+        rolagem ele nunca fica menor que o conteúdo, e os cards só
+        cresceriam)."""
+        altura_disponivel = (
+            altura_total - 2 * self.frameWidth()  # borda do painel (QSS)
+            - _MARGEM_TOPO_SESSAO_FOTOS - _MARGEM_PAINEL_FOTOS
+            - self._cabecalho.sizeHint().height() - _ESPACO_CABECALHO_SESSAO_FOTOS
+            - self._grade.verticalSpacing()
+        )
         altura_celula = altura_disponivel / 2
         if altura_celula <= 0:
             return  # ainda sem geometria real (antes do primeiro layout)
@@ -3657,7 +3764,7 @@ class _PainelFotosAluno(QFrame):
         largura = altura * _RAZAO_LARGURA_ALTURA_CARD_FOTO
 
         tamanho = QSize(int(largura), int(altura))
-        for card in self._cards:
+        for card in self.cards.values():
             card.setFixedSize(tamanho)
 
         # Fecha a própria largura exatamente ao redor dos 2 cards + espaço
@@ -3666,14 +3773,57 @@ class _PainelFotosAluno(QFrame):
         espaco_h = self._grade.horizontalSpacing()
         largura_painel = int(largura) * 2 + espaco_h + 2 * _MARGEM_PAINEL_FOTOS
         self.setFixedWidth(largura_painel)
+        self.tamanho_card_mudou.emit(tamanho)
+
+
+class _AreaSessoesFotos(QScrollArea):
+    """Rolagem horizontal das sessões, para quando não cabem lado a lado.
+
+    A etapa ocupa a altura inteira do wizard (ver
+    `CadastroAlunoWizard._ajustar_espacadores`) e os cards são dimensionados
+    pela altura desta área.
+    O espaço da barra de rolagem fica sempre reservado (`altura_sessoes`):
+    se o tamanho dos cards dependesse de ela estar visível, encolher os
+    cards a escondia, o que os aumentava de novo, e assim por diante.
+    """
+
+    redimensionada = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Só rola para os lados: a vertical fica sempre no topo.
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.verticalScrollBar().valueChanged.connect(
+            lambda valor: valor and self.verticalScrollBar().setValue(0)
+        )
+
+    def wheelEvent(self, evento) -> None:
+        # A roda do mouse (vertical) rola as sessões para os lados.
+        delta = evento.angleDelta().y() or evento.angleDelta().x()
+        barra = self.horizontalScrollBar()
+        barra.setValue(barra.value() - delta)
+        evento.accept()
+
+    def altura_sessoes(self) -> int:
+        return self.height() - self.horizontalScrollBar().sizeHint().height()
+
+    def resizeEvent(self, evento) -> None:
+        super().resizeEvent(evento)
+        self.redimensionada.emit()
+
 
 
 class ImagensAlunoStep(QWidget):
-    """Etapa 8 (última) do cadastro: as quatro fotos do aluno.
+    """Etapa 8 (última) do cadastro: sessões de fotos do aluno.
 
-    Sem validação obrigatória -- diferente das etapas anteriores, nenhuma
-    foto é exigida para concluir o cadastro (especificação, seção 12: só
-    os quatro espaços + seleção + exibição + salvamento, nada além disso).
+    Cada sessão (`_PainelFotosAluno`) tem sua própria data e as quatro
+    fotos (frente, costa, lado direito, lado esquerdo); o botão "+" ao lado
+    da última cria uma sessão NOVA, vazia -- mesmo conceito das avaliações
+    das Etapas 6/7: as sessões já salvas vêm bloqueadas
+    (`_num_sessoes_salvas`) e só as novas vão ao banco (`_salvar_aluno`).
+
+    Nenhuma foto é obrigatória; só uma sessão nova COM foto exige a data
+    (sem foto nenhuma, ela simplesmente não é salva).
     """
 
     def __init__(self, parent=None):
@@ -3681,78 +3831,158 @@ class ImagensAlunoStep(QWidget):
 
         layout_raiz = QVBoxLayout(self)
         layout_raiz.setContentsMargins(0, 0, 0, 0)
-        layout_raiz.setSpacing(18)
+        layout_raiz.setSpacing(12)
 
-        # Cabeçalho — mesmo banner azul das demais etapas de Anamnese, só
-        # muda o subtítulo.
-        cabecalho = QFrame()
-        cabecalho.setStyleSheet(
-            f"background-color: {Cores.AZUL_ESCURO}; border-radius: 14px;"
+        # Mesmo aviso de erro da Etapa 7.
+        self._label_erro = QLabel("")
+        self._label_erro.setWordWrap(True)
+        self._label_erro.setStyleSheet(
+            f"""
+            background-color: {Cores.ERRO_FUNDO};
+            color: {Cores.ERRO};
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: {Fontes.TAMANHO_LABEL}px;
+            """
         )
-        layout_cabecalho = QVBoxLayout(cabecalho)
-        layout_cabecalho.setContentsMargins(28, 20, 28, 20)
-        layout_cabecalho.setSpacing(4)
+        self._label_erro.hide()
+        layout_raiz.addWidget(self._label_erro)
 
-        titulo_cabecalho = QLabel("Anamnese")
-        titulo_cabecalho.setStyleSheet(
-            f"background: transparent; border: none; "
-            f"color: white; font-size: {Fontes.TAMANHO_TITULO}px; font-weight: 700;"
-        )
-        layout_cabecalho.addWidget(titulo_cabecalho)
+        self._sessoes: list = []
+        self._num_sessoes_salvas = 0
 
-        subtitulo_cabecalho = QLabel("Etapa 8: Registro de imagens")
-        subtitulo_cabecalho.setStyleSheet(
-            f"background: transparent; border: none; "
-            f"color: white; font-size: {Fontes.TAMANHO_TEXTO}px; font-weight: 500;"
-        )
-        layout_cabecalho.addWidget(subtitulo_cabecalho)
+        conteudo = QWidget()
+        conteudo.setStyleSheet("background: transparent;")
+        self._layout_sessoes = QHBoxLayout(conteudo)
+        self._layout_sessoes.setContentsMargins(0, 0, 0, 0)
+        self._layout_sessoes.setSpacing(_ESPACAMENTO_GRADE_FOTOS)
+        # Centraliza o conjunto quando sobra largura (como o painel único).
+        self._layout_sessoes.addStretch(1)
+        self._botao_nova_sessao = _CardFotoAluno(None)
+        self._botao_nova_sessao.setToolTip("Adicionar nova sessão de fotos")
+        self._botao_nova_sessao.solicitar_imagem.connect(self._adicionar_sessao_clicado)
+        self._botao_nova_sessao._area.setMinimumSize(1, 1)
+        self._layout_sessoes.addWidget(self._botao_nova_sessao, 0, Qt.AlignVCenter)
+        self._layout_sessoes.addStretch(1)
 
-        layout_raiz.addWidget(cabecalho)
+        self._area = _AreaSessoesFotos()
+        self._area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self._area.setWidgetResizable(True)
+        self._area.setWidget(conteudo)
+        self._area.redimensionada.connect(self._ajustar_sessoes)
+        layout_raiz.addWidget(self._area, 1)
 
-        # Painel com a grade 2x2 dos quatro espaços de foto ------------------
-        self._cards: Dict[str, _CardFotoAluno] = {}
-        for chave, titulo in _SLOTS_FOTOS:
-            card = _CardFotoAluno(titulo)
+        self._nova_sessao()
+
+    # -- Sessões -------------------------------------------------------------
+
+    def _nova_sessao(self) -> _PainelFotosAluno:
+        sessao = _PainelFotosAluno(len(self._sessoes) + 1)
+        for chave, card in sessao.cards.items():
             card.solicitar_imagem.connect(
-                lambda chave=chave: self._selecionar_imagem(chave)
+                lambda sessao=sessao, chave=chave: self._selecionar_imagem(sessao, chave)
             )
-            self._cards[chave] = card
+        sessao.tamanho_card_mudou.connect(self._ajustar_botao_nova_sessao)
+        # Antes do "+" (que fica entre o último painel e o stretch final).
+        self._layout_sessoes.insertWidget(self._layout_sessoes.count() - 2, sessao)
+        self._sessoes.append(sessao)
+        sessao.ajustar(self._area.altura_sessoes())
+        return sessao
 
-        # stretch (não addStretch) + Qt.AlignHCenter: a altura continua
-        # livre para preencher o espaço vertical sobrando (dando ao painel
-        # a altura de que ele precisa pra calcular o tamanho dos cards),
-        # mas a LARGURA passa a ser a do próprio painel (auto-ajustada em
-        # `_PainelFotosAluno._recalcular`), centralizada em vez de esticada
-        # -- é isso que tira o vazio nas laterais do container.
-        # Sem espaçador extra depois do painel: o próprio wizard já reserva
-        # uma margem confortável entre o fim da etapa atual e os botões de
-        # navegação (`CadastroAlunoWizard`, addStretch antes da barra de
-        # botões) -- repetir esse respiro aqui só encolheria os cards à toa.
-        painel = _PainelFotosAluno(self._cards.values())
-        layout_raiz.addWidget(painel, 1, Qt.AlignHCenter)
+    def _ajustar_sessoes(self) -> None:
+        altura = self._area.altura_sessoes()
+        for sessao in self._sessoes:
+            sessao.ajustar(altura)
 
-    def _selecionar_imagem(self, chave: str) -> None:
+    def _adicionar_sessao_clicado(self) -> None:
+        self._nova_sessao()
+        self._limpar_erro()
+        barra = self._area.horizontalScrollBar()
+        QTimer.singleShot(0, lambda: barra.setValue(barra.maximum()))
+
+    def _ajustar_botao_nova_sessao(self, tamanho_card: QSize) -> None:
+        altura = int(tamanho_card.height() * _RAZAO_ALTURA_BOTAO_NOVA_SESSAO)
+        self._botao_nova_sessao.setFixedSize(
+            int(altura * _RAZAO_LARGURA_ALTURA_CARD_FOTO), altura
+        )
+
+    def _remover_sessoes(self) -> None:
+        for sessao in self._sessoes:
+            self._layout_sessoes.removeWidget(sessao)
+            sessao.deleteLater()
+        self._sessoes = []
+        self._num_sessoes_salvas = 0
+        self._limpar_erro()
+
+    def _selecionar_imagem(self, sessao: _PainelFotosAluno, chave: str) -> None:
+        if sessao.bloqueada:
+            return  # sessão já salva: só consulta
         caminho, _ = QFileDialog.getOpenFileName(
             self, "Selecionar imagem", "", _FILTRO_ARQUIVOS_IMAGEM
         )
         if caminho:
-            self._cards[chave].definir_imagem(caminho)
+            sessao.cards[chave].definir_imagem(caminho)
+
+    # -- Validação / dados ------------------------------------------------
+
+    def _limpar_erro(self) -> None:
+        self._label_erro.hide()
+        for sessao in self._sessoes:
+            _marcar_campo_erro(sessao.campo_data, com_erro=False)
+
+    def avaliacoes_ja_salvas(self) -> int:
+        """Quantas sessões atuais já têm linha no banco (ver `_salvar_aluno`)."""
+        return self._num_sessoes_salvas
 
     def obter_dados_validados(self):
-        """Sem campos obrigatórios nesta etapa -- sempre retorna um dict
-        (nunca None), com a foto de cada posição ou None para a que ainda
-        não foi escolhida."""
-        return {chave: self._cards[chave].caminho_imagem for chave, _ in _SLOTS_FOTOS}
+        """Nenhuma foto é obrigatória -- mas uma sessão nova com foto
+        precisa da sua data."""
+        self._limpar_erro()
+        for numero, sessao in enumerate(self._sessoes, start=1):
+            if sessao.bloqueada:
+                continue
+            dados = sessao.dados()
+            tem_foto = any(dados[chave] for chave, _ in _SLOTS_FOTOS)
+            if tem_foto and dados["data"] is None:
+                self._label_erro.setText(f"Informe a data da Sessão {numero}.")
+                self._label_erro.show()
+                _marcar_campo_erro(sessao.campo_data, com_erro=True)
+                self._area.ensureWidgetVisible(sessao)
+                sessao.campo_data.setFocus()
+                return None
+        return {"sessoes_fotos": [sessao.dados() for sessao in self._sessoes]}
 
     def limpar(self) -> None:
-        for card in self._cards.values():
-            card.definir_imagem(None)
+        """Cadastro novo: uma única sessão, vazia e editável."""
+        self._remover_sessoes()
+        self._nova_sessao()
 
-    def carregar_dados(self, dados: dict) -> None:
-        """Preenche os 4 cards com os caminhos de imagem já salvos de um
-        aluno existente -- usada ao abrir um cadastro para edição."""
-        for chave, _titulo in _SLOTS_FOTOS:
-            self._cards[chave].definir_imagem(dados.get(chave))
+    def carregar_sessoes(self, sessoes: list) -> None:
+        """Recria as sessões já salvas de um aluno (bloqueadas) -- lista de
+        `AlunoService.listar_sessoes_fotos`, na ordem em que foram criadas.
+        Sem nenhuma salva, abre com uma sessão vazia (igual a `limpar`)."""
+        self._remover_sessoes()
+        for salva in sessoes:
+            sessao = self._nova_sessao()
+            # Sempre a data salva (a de hoje só vale para sessão nova).
+            sessao.campo_data.setDate(_qdate_de_texto(salva.get("data")) or _DATA_SENTINELA)
+            for chave, card in sessao.cards.items():
+                card.definir_imagem(salva.get(chave))
+            sessao.definir_bloqueada(True)
+        self._num_sessoes_salvas = len(sessoes)
+        if not sessoes:
+            self._nova_sessao()
+
+
+def _sessoes_fotos_para_banco(sessoes: list, a_partir_de: int = 0) -> list:
+    """Sessões NOVAS (índice >= `a_partir_de`, as anteriores já estão no
+    banco e bloqueadas) que têm ao menos uma foto -- uma sessão sem foto
+    nenhuma não vira linha no banco (mesmo motivo das colunas vazias de
+    `_avaliacoes_circunferencias_para_banco`)."""
+    return [
+        sessao for indice, sessao in enumerate(sessoes)
+        if indice >= a_partir_de and any(sessao.get(chave) for chave, _ in _SLOTS_FOTOS)
+    ]
 
 
 def _avaliacoes_circunferencias_para_banco(circunferencias: dict, a_partir_de: int = 0) -> list:
@@ -3768,11 +3998,12 @@ def _avaliacoes_circunferencias_para_banco(circunferencias: dict, a_partir_de: i
     de novo ao banco (regras de edição, seção 9): só a(s) avaliação(ões)
     NOVA(S) desta sessão do wizard chega(m) ao resultado.
 
-    Colunas TOTALMENTE vazias (nenhum campo preenchido -- ex.: a única
-    coluna inicial de um aluno em que a Etapa 6 nunca chegou a ser usada,
-    já que ela não tem campo obrigatório) não viram avaliação nenhuma no
-    banco: sem isso, todo aluno ganharia uma avaliação "fantasma" (todos os
-    campos None) só por a tabela sempre começar com 1 coluna na tela.
+    Colunas sem nenhuma medida (ex.: a única coluna inicial de um aluno em
+    que a Etapa 6 nunca chegou a ser usada, já que ela não tem campo
+    obrigatório) não viram avaliação nenhuma no banco: sem isso, todo aluno
+    ganharia uma avaliação "fantasma" só por a tabela sempre começar com 1
+    coluna na tela. A data não conta -- toda coluna nova já nasce com a de
+    hoje (`_criar_campo_data`).
     """
     datas = circunferencias.get("datas", [])
     avaliacoes = []
@@ -3783,7 +4014,7 @@ def _avaliacoes_circunferencias_para_banco(circunferencias: dict, a_partir_de: i
         for chave, _rotulo, tipo, _maximo in _LINHAS_CIRCUNFERENCIAS:
             if tipo == "numero":
                 linha[chave] = circunferencias.get(chave, [])[indice]
-        if any(valor is not None for valor in linha.values()):
+        if any(valor is not None for chave, valor in linha.items() if chave != "data"):
             avaliacoes.append(linha)
     return avaliacoes
 
@@ -3811,7 +4042,7 @@ def _avaliacoes_composicao_para_banco(
             "percentual_gordura_bruto", "massa_gorda", "massa_magra",
         ):
             linha[chave] = composicao_corporal.get(chave, [])[indice]
-        if any(valor is not None for valor in linha.values()):
+        if any(valor is not None for chave, valor in linha.items() if chave != "data"):
             avaliacoes.append(linha)
     return avaliacoes
 
@@ -3825,11 +4056,9 @@ def _avaliacoes_composicao_para_banco(
 # tela (`CadastroAlunoWizard._definir_bloqueio_dados_basicos`) e, por
 # segurança, também nunca enviado ao UPDATE (`_salvar_aluno`).
 #
-# As fotos da Etapa 8 (`foto_frente`/`foto_costas`/`foto_lado_direito`/
-# `foto_lado_esquerdo`) ficam de fora dessas regras de bloqueio -- esta
-# tarefa não trata da Etapa 8, e ela já permitia substituir uma foto ao
-# reabrir o aluno antes desta mudança; continuam sempre editáveis para não
-# alterar esse comportamento já existente e aprovado.
+# As fotos da Etapa 8 não passam por aqui: ficam em sessões
+# (`sessoes_fotos`), com a mesma regra das avaliações das Etapas 6/7 --
+# sessão salva vira só consulta, só as novas vão ao banco.
 _CAMPOS_ALUNO_EDITAVEIS_APOS_CADASTRO = (
     "altura_m",
     "idade",
@@ -3843,10 +4072,11 @@ _CAMPOS_ALUNO_EDITAVEIS_APOS_CADASTRO = (
     "dor_qual",
     "cirurgia_tem",
     "cirurgia_qual",
-    "foto_frente",
-    "foto_costas",
-    "foto_lado_direito",
-    "foto_lado_esquerdo",
+    # Hábitos de vida (`HabitosVidaStep`): mesma regra da Etapa 5.
+    "medicamento_controlado",
+    "fazendo_dieta",
+    "consumo_alcool",
+    "fuma",
 )
 
 
@@ -3924,6 +4154,7 @@ class CadastroAlunoWizard(QWidget):
             ObjetivoPrincipalStep(),
             FrequenciaTreinoStep(),
             HistoricoSaudeStep(),
+            HabitosVidaStep(),
             AvaliacaoFisicaStep(),
             ComposicaoCorporalStep(),
             ImagensAlunoStep(),
@@ -3933,6 +4164,8 @@ class CadastroAlunoWizard(QWidget):
         for etapa in self._etapas:
             self._stack.addWidget(etapa)
         layout_raiz.addWidget(self._stack, stretch=12)
+        self._layout_raiz = layout_raiz
+        self._stack.currentChanged.connect(self._ajustar_espacadores)
 
         layout_raiz.addStretch(1)
 
@@ -3965,6 +4198,16 @@ class CadastroAlunoWizard(QWidget):
         # "Próximo >".
         ultima_etapa = self._etapa_atual == len(self._etapas) - 1
         self._botao_proximo.setText("Salvar" if ultima_etapa else "Próximo >")
+
+    def _ajustar_espacadores(self, indice: int) -> None:
+        """A etapa de fotos ocupa a altura inteira (os cards são
+        dimensionados por ela): zera os dois espaçadores de centralização
+        só enquanto ela está aberta. Antes ela chegava a isso sozinha, com a
+        altura mínima crescendo junto com os cards -- o que também impedia a
+        janela de encolher."""
+        fator = 0 if isinstance(self._etapas[indice], ImagensAlunoStep) else 1
+        self._layout_raiz.setStretch(0, fator)
+        self._layout_raiz.setStretch(3, fator)
 
     def _anterior_clicado(self) -> None:
         self._label_erro_geral.hide()
@@ -4017,8 +4260,9 @@ class CadastroAlunoWizard(QWidget):
             if chave in parametros_aceitos
         }
 
-        etapa_circunferencias = self._etapas[5]
-        etapa_composicao = self._etapas[6]
+        etapa_circunferencias = self._etapas[6]
+        etapa_composicao = self._etapas[7]
+        etapa_imagens = self._etapas[8]
 
         # Só as avaliações CRIADAS NESTA sessão do wizard (ainda sem linha
         # no banco) são convertidas -- as que já vieram do banco (colunas
@@ -4034,6 +4278,10 @@ class CadastroAlunoWizard(QWidget):
             self._dados_coletados.get("peso", []),
             self._dados_coletados.get("composicao_corporal", {}),
             a_partir_de=etapa_composicao.avaliacoes_ja_salvas(),
+        )
+        sessoes_fotos_novas = _sessoes_fotos_para_banco(
+            self._dados_coletados.get("sessoes_fotos", []),
+            a_partir_de=etapa_imagens.avaliacoes_ja_salvas(),
         )
 
         try:
@@ -4065,6 +4313,7 @@ class CadastroAlunoWizard(QWidget):
             self._aluno_service.adicionar_avaliacoes_composicao(
                 self._aluno_id, avaliacoes_composicao_novas
             )
+            self._aluno_service.adicionar_sessoes_fotos(self._aluno_id, sessoes_fotos_novas)
         except Exception:
             self._label_erro_geral.setText(
                 "Não foi possível salvar o aluno agora. Tente novamente."
@@ -4128,11 +4377,11 @@ class CadastroAlunoWizard(QWidget):
         self._label_erro_geral.hide()
 
         etapa_dados, etapa_anamnese, etapa_objetivo, etapa_frequencia, etapa_saude, \
-            etapa_circunferencias, etapa_composicao, etapa_imagens = self._etapas
+            etapa_habitos, etapa_circunferencias, etapa_composicao, etapa_imagens = self._etapas
 
         for etapa in (
             etapa_dados, etapa_anamnese, etapa_objetivo, etapa_frequencia,
-            etapa_saude, etapa_imagens,
+            etapa_saude, etapa_habitos,
         ):
             etapa.limpar()
             etapa.carregar_dados(dados_aluno)
@@ -4148,6 +4397,7 @@ class CadastroAlunoWizard(QWidget):
         etapa_composicao.carregar_avaliacoes(
             self._aluno_service.listar_avaliacoes_composicao(aluno_id)
         )
+        etapa_imagens.carregar_sessoes(self._aluno_service.listar_sessoes_fotos(aluno_id))
 
         self._etapa_atual = 0
         self._stack.setCurrentIndex(0)
