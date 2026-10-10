@@ -15,6 +15,10 @@ class Cores:
     AZUL_ESCURO = "#1E4FBF"
     AZUL_HOVER = "#1A45AC"
 
+    ROSA_PRIMARIO = "#DF97DA"
+    ROSA_ESCURO = "#D383CE"
+    ROSA_HOVER = "#C46FBE"
+
     ERRO = "#D64545"
     ERRO_FUNDO = "#FDEEEE"
     SUCESSO = "#1F9254"

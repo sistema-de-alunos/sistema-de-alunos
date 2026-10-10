@@ -4,12 +4,14 @@ from pathlib import Path
 from typing import Dict, Optional
 
 from core.qt_core import (
+    QApplication,
     QByteArray,
     QButtonGroup,
     QCalendarWidget,
     QColor,
     QComboBox,
     QDate,
+    QEvent,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -18,6 +20,7 @@ from core.qt_core import (
     QIcon,
     QLabel,
     QLineEdit,
+    QObject,
     QPainter,
     QPalette,
     QPixmap,
@@ -282,9 +285,10 @@ class DadosAlunoStep(QWidget):
         layout_cartao.addWidget(self._grupo_idade)
 
         self._campo_sexo = QComboBox()
-        self._campo_sexo.addItem("Selecione uma opção", userData=None)
+        self._campo_sexo.setPlaceholderText("Selecione uma opção")
         for opcao in SEXO_OPCOES:
             self._campo_sexo.addItem(opcao, userData=opcao)
+        self._campo_sexo.setCurrentIndex(-1)
         paleta_popup = self._campo_sexo.view().palette()
         paleta_popup.setColor(QPalette.Base, QColor(Cores.SUPERFICIE))
         paleta_popup.setColor(QPalette.Text, QColor(Cores.TEXTO_PRIMARIO))
@@ -366,8 +370,7 @@ class DadosAlunoStep(QWidget):
         self._campo_idade.setText("" if idade is None else str(idade))
 
         sexo = dados.get("sexo")
-        indice_sexo = self._campo_sexo.findData(sexo) if sexo else -1
-        self._campo_sexo.setCurrentIndex(indice_sexo if indice_sexo >= 0 else 0)
+        self._campo_sexo.setCurrentIndex(self._campo_sexo.findData(sexo) if sexo else -1)
 
         altura_m = dados.get("altura_m")
         self._campo_altura.setText("" if altura_m is None else f"{altura_m:.2f}")
@@ -389,7 +392,7 @@ class DadosAlunoStep(QWidget):
     def limpar(self) -> None:
         self._campo_nome.clear()
         self._campo_idade.clear()
-        self._campo_sexo.setCurrentIndex(0)
+        self._campo_sexo.setCurrentIndex(-1)
         self._campo_altura.clear()
         self._grupo_nome.limpar_erro()
         self._grupo_idade.limpar_erro()
@@ -2990,6 +2993,60 @@ _CAMPOS_ALUNO_EDITAVEIS_APOS_CADASTRO = (
 )
 
 
+_AZUL_PARA_ROSA = {
+    Cores.AZUL_PRIMARIO: Cores.ROSA_PRIMARIO,
+    Cores.AZUL_ESCURO: Cores.ROSA_ESCURO,
+    Cores.AZUL_HOVER: Cores.ROSA_HOVER,
+}
+_ROSA_PARA_AZUL = {rosa: azul for azul, rosa in _AZUL_PARA_ROSA.items()}
+
+
+class _TemaFeminino(QObject):
+    """Troca o azul pelo rosa no cadastro enquanto o sexo selecionado for Feminino.
+
+    Fica escutando StyleChange/Polish para repintar estilos reaplicados depois
+    (ex.: campo que sai do estado de erro) e widgets criados mais tarde.
+    """
+
+    def __init__(self, raiz: QWidget):
+        super().__init__(raiz)
+        self._raiz = raiz
+        self._ativo = False
+
+    def definir(self, ativo: bool) -> None:
+        if ativo == self._ativo:
+            return
+        self._ativo = ativo
+        if ativo:
+            QApplication.instance().installEventFilter(self)
+        else:
+            QApplication.instance().removeEventFilter(self)
+        for widget in [self._raiz, *self._raiz.findChildren(QWidget)]:
+            self._pintar(widget)
+
+    def eventFilter(self, obj, evento):
+        if evento.type() in (QEvent.StyleChange, QEvent.Polish) and isinstance(obj, QWidget):
+            pai = obj
+            while pai is not None and pai is not self._raiz:
+                pai = pai.parentWidget()
+            if pai is not None:
+                self._pintar(obj)
+        return False
+
+    def _pintar(self, widget: QWidget) -> None:
+        mapa = _AZUL_PARA_ROSA if self._ativo else _ROSA_PARA_AZUL
+        estilo = novo = widget.styleSheet()
+        for de, para in mapa.items():
+            novo = novo.replace(de, para)
+        if novo != estilo:
+            widget.setStyleSheet(novo)
+        paleta = widget.palette()
+        destaque = paleta.color(QPalette.Highlight).name().upper()
+        if destaque in mapa:
+            paleta.setColor(QPalette.Highlight, QColor(mapa[destaque]))
+            widget.setPalette(paleta)
+
+
 class CadastroAlunoWizard(QWidget):
     cadastro_concluido = Signal()
     voltar_para_home = Signal()
@@ -3035,6 +3092,12 @@ class CadastroAlunoWizard(QWidget):
             ComposicaoCorporalStep(),
             ImagensAlunoStep(),
         ]
+
+        self._tema_feminino = _TemaFeminino(self)
+        campo_sexo = self._etapas[0]._campo_sexo
+        campo_sexo.currentIndexChanged.connect(
+            lambda: self._tema_feminino.definir(campo_sexo.currentData() == "Feminino")
+        )
 
         self._stack = QStackedWidget()
         for etapa in self._etapas:
