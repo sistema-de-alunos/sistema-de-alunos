@@ -1,5 +1,6 @@
 import inspect
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -33,6 +34,7 @@ from core.qt_core import (
     QSize,
     QSizePolicy,
     QStackedWidget,
+    QStandardPaths,
     QSvgRenderer,
     QTableWidget,
     QTextEdit,
@@ -43,6 +45,7 @@ from core.qt_core import (
     QWidget,
     Signal,
 )
+from core.planilha_medidas import gerar_planilha_medidas, nome_arquivo_medidas
 from core.theme import Cores, Fontes
 from core.validators import (
     FREQUENCIA_SEMANAL_OPCOES,
@@ -1410,6 +1413,8 @@ _REGIAO_POR_CHAVE = {
 
 
 class AvaliacaoFisicaStep(QWidget):
+    baixar_planilha_solicitado = Signal(int)
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -1430,8 +1435,9 @@ class AvaliacaoFisicaStep(QWidget):
         layout_cartao.setSpacing(24)
 
         self._tabela_circunferencias, self._campos_circunferencias = _criar_tabela_widgets(
-            _LINHAS_CIRCUNFERENCIAS
+            _LINHAS_TABELA_CIRCUNFERENCIAS
         )
+        self._conectar_botao_baixar(0)
 
         self._botao_nova_avaliacao = QPushButton("+")
         self._botao_nova_avaliacao.setCursor(Qt.PointingHandCursor)
@@ -1527,9 +1533,19 @@ class AvaliacaoFisicaStep(QWidget):
         for _chave, widget in pares_chave_widget:
             widget.textChanged.connect(self._recalcular_destaques)
 
+    def _conectar_botao_baixar(self, coluna: int) -> None:
+        celula = self._campos_circunferencias["baixar"][coluna]
+        campo_data = self._campos_circunferencias["datas"][coluna]
+        celula.botao.clicked.connect(lambda: self.baixar_planilha_solicitado.emit(coluna))
+        campo_data.dateChanged.connect(
+            lambda data: celula.definir_tem_data(data != _DATA_SENTINELA)
+        )
+        celula.definir_tem_data(campo_data.date() != _DATA_SENTINELA)
+
     def _adicionar_nova_avaliacao(self) -> None:
         novos = _adicionar_coluna_tabela(
-            self._tabela_circunferencias, self._campos_circunferencias, _LINHAS_CIRCUNFERENCIAS
+            self._tabela_circunferencias, self._campos_circunferencias,
+            _LINHAS_TABELA_CIRCUNFERENCIAS,
         )
         self._conectar_coluna_boneco(
             [(chave, widget) for chave, widget in novos if chave in _REGIAO_POR_CHAVE]
@@ -1537,6 +1553,7 @@ class AvaliacaoFisicaStep(QWidget):
 
         self._num_colunas += 1
         self._coluna_ativa = self._num_colunas - 1
+        self._conectar_botao_baixar(self._coluna_ativa)
 
         barra = self._tabela_circunferencias.horizontalScrollBar()
         barra.setValue(barra.maximum())
@@ -1609,12 +1626,14 @@ class AvaliacaoFisicaStep(QWidget):
 
         while self._num_colunas < len(avaliacoes):
             novos = _adicionar_coluna_tabela(
-                self._tabela_circunferencias, self._campos_circunferencias, _LINHAS_CIRCUNFERENCIAS
+                self._tabela_circunferencias, self._campos_circunferencias,
+                _LINHAS_TABELA_CIRCUNFERENCIAS,
             )
             self._conectar_coluna_boneco(
                 [(chave, widget) for chave, widget in novos if chave in _REGIAO_POR_CHAVE]
             )
             self._num_colunas += 1
+            self._conectar_botao_baixar(self._num_colunas - 1)
         self._coluna_ativa = self._num_colunas - 1
 
         for coluna, avaliacao in enumerate(avaliacoes):
@@ -1658,6 +1677,7 @@ _LINHAS_CIRCUNFERENCIAS = [
     ("panturrilha_e", "Panturrilha E", "numero", _LIMITE_MEDIDA),
     ("panturrilha_d", "Panturrilha D", "numero", _LIMITE_MEDIDA),
 ]
+_LINHAS_TABELA_CIRCUNFERENCIAS = [("baixar", "", "baixar", None)] + _LINHAS_CIRCUNFERENCIAS
 
 _LIMITE_DOBRA_MM = 100.0
 
@@ -1892,6 +1912,44 @@ class _CampoData(QWidget):
         self._botao_calendario.setEnabled(not somente_leitura)
 
 
+_SVG_DOWNLOAD = """
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+     stroke="{cor}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 4v11"></path>
+    <polyline points="7 10 12 15 17 10"></polyline>
+    <path d="M5 19h14"></path>
+</svg>
+"""
+
+
+class _CelulaBaixarPlanilha(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self.botao = QToolButton()
+        self.botao.setCursor(Qt.PointingHandCursor)
+        self.botao.setFixedSize(34, 26)
+        self.botao.setIconSize(QSize(15, 15))
+        self.botao.setIcon(_renderizar_icone(_SVG_DOWNLOAD, "white", 15))
+        self.botao.setStyleSheet(
+            f"""
+            QToolButton {{ background-color: {Cores.AZUL_ESCURO}; border: none; border-radius: 8px; }}
+            QToolButton:hover {{ background-color: {Cores.AZUL_HOVER}; }}
+            QToolButton:disabled {{ background-color: {Cores.DESABILITADO_FUNDO}; }}
+            """
+        )
+        layout.addWidget(self.botao, alignment=Qt.AlignCenter)
+
+    def definir_tem_data(self, tem_data: bool) -> None:
+        self.botao.setEnabled(tem_data)
+        self.botao.setToolTip(
+            "Baixar planilha desta data" if tem_data
+            else "Preencha a data desta coluna para baixar a planilha"
+        )
+
+
 def _data_local_hoje() -> QDate:
     return QDate.currentDate()
 
@@ -1917,6 +1975,8 @@ def _criar_widget_celula(tipo: str, maximo: Optional[float]) -> QWidget:
         return _criar_campo_data()
     if tipo == "resultado":
         return _criar_label_resultado()
+    if tipo == "baixar":
+        return _CelulaBaixarPlanilha()
     return _criar_campo_numerico(maximo)
 
 
@@ -2020,7 +2080,7 @@ def _limpar_widget(widget: QWidget) -> None:
     elif isinstance(widget, QLabel):
         widget.setText("—")
         widget.setToolTip("")
-    else:
+    elif isinstance(widget, QLineEdit):
         widget.clear()
 
 
@@ -2315,6 +2375,17 @@ class ComposicaoCorporalStep(QWidget):
 
     def avaliacoes_ja_salvas(self) -> int:
         return self._num_avaliacoes_salvas
+
+    def medidas_da_data(self, data: str):
+        """Dobras e peso da coluna com essa data (dd/MM/yyyy); vazio se não houver."""
+        for coluna, campo_data in enumerate(self._campos_dobras_reais["datas"]):
+            if _valor_data(campo_data) == data:
+                dobras = {
+                    chave: _texto_para_numero(self._campos_dobras_reais[chave][coluna].text())
+                    for chave in _CHAVES_DOBRAS_7
+                }
+                return dobras, _texto_para_numero(self._campos_peso["peso"][coluna].text())
+        return {}, None
 
     def _definir_coluna_bloqueada(self, coluna: int, bloqueada: bool) -> None:
         for chave, _rotulo, _tipo, _maximo in _LINHAS_DOBRAS_COM_DATA:
@@ -3081,6 +3152,20 @@ class CadastroAlunoWizard(QWidget):
         self._label_erro_geral.hide()
         layout_raiz.addWidget(self._label_erro_geral)
 
+        self._label_sucesso_geral = QLabel("")
+        self._label_sucesso_geral.setWordWrap(True)
+        self._label_sucesso_geral.setStyleSheet(
+            f"""
+            background-color: {Cores.SUCESSO_FUNDO};
+            color: {Cores.SUCESSO};
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: {Fontes.TAMANHO_LABEL}px;
+            """
+        )
+        self._label_sucesso_geral.hide()
+        layout_raiz.addWidget(self._label_sucesso_geral)
+
         self._etapas = [
             DadosAlunoStep(),
             AnamneseStep(),
@@ -3098,6 +3183,7 @@ class CadastroAlunoWizard(QWidget):
         campo_sexo.currentIndexChanged.connect(
             lambda: self._tema_feminino.definir(campo_sexo.currentData() == "Feminino")
         )
+        self._etapas[6].baixar_planilha_solicitado.connect(self._baixar_planilha)
 
         self._stack = QStackedWidget()
         for etapa in self._etapas:
@@ -3135,7 +3221,7 @@ class CadastroAlunoWizard(QWidget):
     def _ajustar_espacadores(self, indice: int) -> None:
         fator = 0 if isinstance(self._etapas[indice], ImagensAlunoStep) else 1
         self._layout_raiz.setStretch(0, fator)
-        self._layout_raiz.setStretch(3, fator)
+        self._layout_raiz.setStretch(4, fator)
 
     def _anterior_clicado(self) -> None:
         self._label_erro_geral.hide()
@@ -3224,6 +3310,62 @@ class CadastroAlunoWizard(QWidget):
             return
 
         self.cadastro_concluido.emit()
+
+    def _baixar_planilha(self, coluna: int) -> None:
+        self._label_erro_geral.hide()
+        self._label_sucesso_geral.hide()
+
+        circunferencias = self._etapas[6].obter_dados_validados()["circunferencias"]
+        texto_data = circunferencias["datas"][coluna]
+        if texto_data is None:
+            self._label_erro_geral.setText("Preencha a data desta coluna para baixar a planilha.")
+            self._label_erro_geral.show()
+            return
+
+        sexo = self._dados_coletados.get("sexo")
+        if sexo not in ("Masculino", "Feminino"):
+            self._label_erro_geral.setText(
+                "Selecione o sexo Masculino ou Feminino na Etapa 1 para baixar a planilha."
+            )
+            self._label_erro_geral.show()
+            return
+
+        data = datetime.strptime(texto_data, "%d/%m/%Y").date()
+        nome_arquivo = nome_arquivo_medidas(self._dados_coletados.get("nome_completo"), data)
+        pasta = QStandardPaths.writableLocation(QStandardPaths.DownloadLocation)
+        caminho, _ = QFileDialog.getSaveFileName(
+            self, "Salvar planilha de medidas", str(Path(pasta) / nome_arquivo),
+            "Planilha do Excel (*.xlsx)",
+        )
+        if not caminho:
+            return
+        if not caminho.lower().endswith(".xlsx"):
+            caminho += ".xlsx"
+
+        dobras, peso = self._etapas[7].medidas_da_data(texto_data)
+        try:
+            gerar_planilha_medidas(
+                caminho,
+                sexo=sexo,
+                idade=self._dados_coletados.get("idade"),
+                data=data,
+                circunferencias={
+                    chave: valores[coluna] for chave, valores in circunferencias.items()
+                },
+                dobras=dobras,
+                peso=peso,
+            )
+        except Exception:
+            self._label_erro_geral.setText(
+                "Não foi possível salvar a planilha. Verifique se o arquivo não está "
+                "aberto em outro programa e tente novamente."
+            )
+            self._label_erro_geral.show()
+            return
+
+        self._label_sucesso_geral.setText(f"Planilha salva em {caminho}")
+        self._label_sucesso_geral.show()
+        QTimer.singleShot(4000, self._label_sucesso_geral.hide)
 
 
     def _definir_bloqueio_dados_basicos(self, bloqueado: bool) -> None:

@@ -20,6 +20,8 @@ if ($LASTEXITCODE) { throw "Falha ao instalar dependencias." }
     --add-data "assets\corpos\corpomulher.png;assets\corpos" `
     --add-data "assets\corpos\mascaras_masculino;assets\corpos\mascaras_masculino" `
     --add-data "assets\corpos\mascaras_feminino;assets\corpos\mascaras_feminino" `
+    --add-data "assets\planilhas\medidas_masculino.xlsx;assets\planilhas" `
+    --add-data "assets\planilhas\medidas_feminino.xlsx;assets\planilhas" `
     --add-data "musculogordura.png;."
 if ($LASTEXITCODE) { throw "Falha no PyInstaller." }
 
