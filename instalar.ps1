@@ -42,6 +42,7 @@ try {
         $atalho.IconLocation = $exe
         $atalho.Save()
     }
+    & ie4uinit.exe -show
 
     Write-Host ""
     Write-Host "$nome instalado com sucesso! Abrindo..." -ForegroundColor Green
