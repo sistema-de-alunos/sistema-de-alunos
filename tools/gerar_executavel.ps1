@@ -14,6 +14,8 @@ if ($LASTEXITCODE) { throw "Falha ao instalar dependencias." }
     --windowed `
     --noconfirm `
     --clean `
+    --icon "assets\logo.ico" `
+    --add-data "assets\logo.ico;assets" `
     --add-data "assets\corpos\corpohomem.png;assets\corpos" `
     --add-data "assets\corpos\corpomulher.png;assets\corpos" `
     --add-data "assets\corpos\mascaras_masculino;assets\corpos\mascaras_masculino" `
