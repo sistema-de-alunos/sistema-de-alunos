@@ -1930,7 +1930,7 @@ class _CelulaBaixarPlanilha(QWidget):
 
         self.botao = QToolButton()
         self.botao.setCursor(Qt.PointingHandCursor)
-        self.botao.setFixedSize(34, 26)
+        self.botao.setFixedSize(90, 26)
         self.botao.setIconSize(QSize(15, 15))
         self.botao.setIcon(_renderizar_icone(_SVG_DOWNLOAD, "white", 15))
         self.botao.setStyleSheet(
