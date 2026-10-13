@@ -39,7 +39,7 @@ try {
         $atalho = $shell.CreateShortcut((Join-Path $pasta "$nome.lnk"))
         $atalho.TargetPath = $exe
         $atalho.WorkingDirectory = $destino
-        $atalho.IconLocation = $exe
+        $atalho.IconLocation = Join-Path $destino "_internal\assets\logo.ico"
         $atalho.Save()
     }
     & ie4uinit.exe -show
