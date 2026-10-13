@@ -3073,12 +3073,6 @@ _ROSA_PARA_AZUL = {rosa: azul for azul, rosa in _AZUL_PARA_ROSA.items()}
 
 
 class _TemaFeminino(QObject):
-    """Troca o azul pelo rosa no cadastro enquanto o sexo selecionado for Feminino.
-
-    Fica escutando StyleChange/Polish para repintar estilos reaplicados depois
-    (ex.: campo que sai do estado de erro) e widgets criados mais tarde.
-    """
-
     def __init__(self, raiz: QWidget):
         super().__init__(raiz)
         self._raiz = raiz
